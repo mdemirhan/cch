@@ -1,0 +1,52 @@
+[project]
+name = "cch"
+version = "0.1.0"
+description = "Claude Code History — Interactive dashboard for Claude Code session data"
+requires-python = ">=3.13"
+dependencies = [
+    "nicegui>=3.7.0",
+    "plotly>=6.0.0",
+    "pydantic>=2.10.0",
+    "typer>=0.12.0",
+    "aiosqlite>=0.21.0",
+    "result>=0.17.0",
+]
+
+[project.scripts]
+cch = "cch.cli:app"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.38.0",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.15.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 99
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+"src/cch/ui/*" = ["SIM117"]
+
+[tool.basedpyright]
+pythonVersion = "3.13"
+typeCheckingMode = "standard"
+pythonPlatform = "All"

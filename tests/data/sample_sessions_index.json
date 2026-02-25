@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "sessionId": "test-session-001",
+      "fullPath": "/tmp/cch-test/projects/test-project/test-session-001.jsonl",
+      "fileMtime": 1705312825000,
+      "firstPrompt": "Hello, can you help me fix a bug in my Python code?",
+      "summary": "Fixed Python add function bug",
+      "messageCount": 7,
+      "created": "2026-01-15T10:00:01.000Z",
+      "modified": "2026-01-15T10:00:25.000Z",
+      "gitBranch": "main",
+      "projectPath": "/Users/test/myproject",
+      "isSidechain": false
+    }
+  ],
+  "originalPath": "/tmp/cch-test/projects/test-project"
+}
