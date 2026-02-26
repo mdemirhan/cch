@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QStatusBar,
     QWidget,
@@ -90,16 +91,37 @@ class CCHMainWindow(QMainWindow):
         self.setStatusBar(self._status_bar)
         self._status_label = QLabel("Loading...")
         self._status_bar.addWidget(self._status_label)
-        self._status_context_label = QLabel("View: Projects")
-        self._status_bar.addPermanentWidget(self._status_context_label)
-        self._status_summary_text = "Loading..."
+        self._copy_session_ref_btn = QPushButton("Copy")
+        self._copy_session_ref_btn.setFixedHeight(20)
+        self._copy_session_ref_btn.setToolTip("Copy selected project name and session id")
+        self._copy_session_ref_btn.setEnabled(False)
+        self._copy_session_ref_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._copy_session_ref_btn.setStyleSheet(
+            "QPushButton { "
+            "  padding: 2px 8px; "
+            "  border: 1px solid #D4D8DC; "
+            "  border-radius: 8px; "
+            "  background-color: #FFFFFF; "
+            "  font-size: 11px; "
+            "}"
+            "QPushButton:hover:enabled { "
+            "  border-color: #D86C1A; "
+            "}"
+            "QPushButton:disabled { "
+            "  color: #AEB4BA; "
+            "  background-color: #F5F7F9; "
+            "}"
+        )
+        self._copy_session_ref_btn.clicked.connect(self._copy_session_reference)
+        self._status_bar.addPermanentWidget(self._copy_session_ref_btn)
+        self._status_default_text = "Ready"
         self._shutdown_in_progress = False
         self._project_request_generation = 0
         self._session_request_generation = 0
         self._selected_project_id = ""
         self._selected_project_name = ""
         self._active_session_id = ""
-        self._selected_session_title = ""
+        self._active_session_file_path = ""
         self._project_names_by_id: dict[str, str] = {}
         self._refresh_in_progress = False
         self._current_nav = "history"
@@ -241,7 +263,7 @@ class CCHMainWindow(QMainWindow):
         self._selected_project_id = project_id
         self._selected_project_name = self._project_names_by_id.get(project_id, "")
         self._active_session_id = ""
-        self._selected_session_title = ""
+        self._active_session_file_path = ""
         self._update_status_context()
         await self._load_project_sessions(project_id)
 
@@ -284,8 +306,7 @@ class CCHMainWindow(QMainWindow):
             self._selected_project_id = detail.project_id or self._selected_project_id
             if detail.project_name:
                 self._selected_project_name = detail.project_name
-            title = detail.summary or detail.first_prompt or detail.session_id[:12]
-            self._selected_session_title = " ".join(title.split())
+            self._active_session_file_path = detail.file_path
             self._update_status_context()
             self._content_panel.show_session(
                 detail,
@@ -351,7 +372,6 @@ class CCHMainWindow(QMainWindow):
         finally:
             self._refresh_in_progress = False
             self._sidebar.set_refresh_busy(False)
-            self._status_label.setText(self._status_summary_text)
             self._update_status_context()
 
     async def initialize(self) -> None:
@@ -394,30 +414,38 @@ class CCHMainWindow(QMainWindow):
                 self._selected_project_id = ""
                 self._selected_project_name = ""
                 self._active_session_id = ""
-                self._selected_session_title = ""
-
-            # Count sessions
-            total_sessions = sum(p.session_count for p in projects)
-            self._status_summary_text = f"{len(projects)} projects  {total_sessions} sessions"
-            self._status_label.setText(self._status_summary_text)
+                self._active_session_file_path = ""
             self._update_status_context()
 
     def _update_status_context(self) -> None:
-        """Render current navigation + selection context in the status bar."""
-        nav_label = {
-            "history": "Projects",
-            "search": "Search",
-            "statistics": "Stats",
-        }.get(self._current_nav, self._current_nav.title())
-        parts = [f"View: {nav_label}"]
-        if self._selected_project_name:
-            parts.append(f"Project: {self._selected_project_name}")
-        if self._selected_session_title:
-            title = self._selected_session_title
-            if len(title) > 56:
-                title = f"{title[:53]}..."
-            parts.append(f"Session: {title}")
-        self._status_context_label.setText(" | ".join(parts))
+        """Render selected project/session context in the status bar."""
+        has_selection = bool(self._active_session_id)
+        if has_selection:
+            project_label = self._selected_project_name or self._selected_project_id or "Unknown"
+            self._status_default_text = (
+                f"Project: {project_label} | Session ID: {self._active_session_id}"
+            )
+        else:
+            self._status_default_text = "Ready"
+        if not self._refresh_in_progress and not self._shutdown_in_progress:
+            self._status_label.setText(self._status_default_text)
+        self._copy_session_ref_btn.setEnabled(has_selection)
+
+    def _copy_session_reference(self) -> None:
+        """Copy selected project, session id, and session file path."""
+        if not self._active_session_id:
+            return
+        if not self._active_session_file_path:
+            return
+        project_label = self._selected_project_name or self._selected_project_id or "Unknown"
+        text = (
+            f"Project: {project_label}\n"
+            f"Session ID: {self._active_session_id}\n"
+            f"Session File: {self._active_session_file_path}"
+        )
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
+        self._status_bar.showMessage("Copied project/session/path reference", 1500)
 
     def _restore_state(self) -> None:
         """Restore window geometry and splitter positions from QSettings."""

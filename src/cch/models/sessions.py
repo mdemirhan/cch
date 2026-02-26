@@ -65,6 +65,7 @@ class SessionDetail(BaseModel):
 
     session_id: str
     provider: str = "claude"
+    file_path: str = ""
     project_id: str = ""
     project_name: str = ""
     first_prompt: str = ""

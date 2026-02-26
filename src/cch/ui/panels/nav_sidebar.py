@@ -60,22 +60,22 @@ class NavSidebar(QWidget):
 
         layout.addStretch()
 
-        self._refresh_btn = QPushButton("Inc Refresh")
+        self._refresh_btn = QPushButton("Inc\nRefresh")
         self._refresh_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         self._refresh_btn.setIconSize(QSize(14, 14))
-        self._refresh_btn.setFixedSize(80, 34)
+        self._refresh_btn.setFixedSize(80, 44)
         self._refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._refresh_btn.setStyleSheet(self._toolbar_button_style())
         self._refresh_btn.setToolTip("Incremental refresh (changed files only)")
         self._refresh_btn.clicked.connect(self.refresh_requested.emit)
         layout.addWidget(self._refresh_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self._force_refresh_btn = QPushButton("Force")
+        self._force_refresh_btn = QPushButton("Force\nRefresh")
         self._force_refresh_btn.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
         )
         self._force_refresh_btn.setIconSize(QSize(14, 14))
-        self._force_refresh_btn.setFixedSize(80, 34)
+        self._force_refresh_btn.setFixedSize(80, 44)
         self._force_refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._force_refresh_btn.setStyleSheet(self._toolbar_button_style())
         self._force_refresh_btn.setToolTip("Force full refresh (reindex all files)")
@@ -140,8 +140,8 @@ class NavSidebar(QWidget):
             self._refresh_btn.setText("Running")
             self._force_refresh_btn.setText("Running")
             return
-        self._refresh_btn.setText("Inc Refresh")
-        self._force_refresh_btn.setText("Force")
+        self._refresh_btn.setText("Inc\nRefresh")
+        self._force_refresh_btn.setText("Force\nRefresh")
 
     @staticmethod
     def _button_style(active: bool) -> str:

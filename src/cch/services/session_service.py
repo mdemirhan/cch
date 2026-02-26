@@ -117,6 +117,7 @@ class SessionService:
             SessionDetail(
                 session_id=row["session_id"],
                 provider=row["provider"] or "claude",
+                file_path=row["file_path"] or "",
                 project_id=row["project_id"] or "",
                 project_name=row["project_name"] or "",
                 first_prompt=row["first_prompt"] or "",
