@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 from cch.models.sessions import SessionDetail
@@ -39,6 +39,8 @@ class EmptyStateView(QWidget):
 class ContentPanel(QStackedWidget):
     """Right-side content area with multiple views."""
 
+    session_requested = Signal(str, str)  # session_id, message_uuid from search results
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
@@ -53,7 +55,7 @@ class ContentPanel(QStackedWidget):
         self.addWidget(self._statistics_view)
 
         # Wire search → session navigation
-        self._search_view.session_requested.connect(self._on_search_session_requested)
+        self._search_view.session_requested.connect(self.session_requested.emit)
 
         self._services: ServiceContainer | None = None
         self.setCurrentWidget(self._empty_view)
@@ -76,29 +78,20 @@ class ContentPanel(QStackedWidget):
         """Switch to the statistics view."""
         self.setCurrentWidget(self._statistics_view)
 
-    def show_session(self, detail: SessionDetail) -> None:
+    def show_session(
+        self,
+        detail: SessionDetail,
+        *,
+        focus_message_uuid: str = "",
+    ) -> None:
         """Display a session in the history view."""
-        self._history_view.show_session(detail)
+        self._history_view.show_session(
+            detail,
+            focus_message_uuid=focus_message_uuid,
+        )
         self.setCurrentWidget(self._history_view)
 
     def focus_search(self) -> None:
         """Focus the search input."""
         self.setCurrentWidget(self._search_view)
         self._search_view.focus_input()
-
-    def _on_search_session_requested(self, session_id: str) -> None:
-        """Load a session from search results."""
-        if not self._services:
-            return
-        from result import Ok
-
-        from cch.ui.async_bridge import schedule
-
-        services = self._services
-
-        async def _load() -> None:
-            result = await services.session_service.get_session_detail(session_id)
-            if isinstance(result, Ok):
-                self.show_session(result.ok_value)
-
-        schedule(_load())

@@ -1,17 +1,16 @@
-"""Left navigation sidebar — fixed-width text buttons."""
+"""Left navigation sidebar with icon-backed navigation buttons."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtWidgets import QLabel, QPushButton, QStyle, QVBoxLayout, QWidget
 
 from cch.ui.theme import COLORS
 
 _NAV_ITEMS = [
-    ("history", "History"),
-    ("search", "Search"),
-    ("statistics", "Stats"),
-    ("export", "Export"),
+    ("history", "Projects", QStyle.StandardPixmap.SP_FileDialogDetailedView),
+    ("search", "Search", QStyle.StandardPixmap.SP_FileDialogContentsView),
+    ("statistics", "Stats", QStyle.StandardPixmap.SP_FileDialogInfoView),
 ]
 
 
@@ -22,31 +21,34 @@ class NavSidebar(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedWidth(72)
+        self.setFixedWidth(96)
         self.setStyleSheet(
-            f"background-color: {COLORS['sidebar_bg']}; "
+            "background-color: #F4F6F8; "
             f"border-right: 1px solid {COLORS['border']};"
         )
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 8)
-        layout.setSpacing(2)
+        layout.setContentsMargins(8, 10, 8, 10)
+        layout.setSpacing(6)
 
-        # App title
+        # App title badge
         title = QLabel("CCH")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet(
-            f"font-weight: bold; font-size: 13px; color: {COLORS['primary']}; "
-            f"padding: 8px 0 16px 0; background-color: transparent; "
-            f"letter-spacing: 2px;"
+            "font-weight: 700; font-size: 13px; color: #D86C1A; "
+            "padding: 8px 6px; background-color: #FFF; border: 1px solid #E5E8EB; "
+            "border-radius: 10px; letter-spacing: 1px;"
         )
         layout.addWidget(title)
 
         self._buttons: dict[str, QPushButton] = {}
-        for name, label in _NAV_ITEMS:
+        for name, label, icon_type in _NAV_ITEMS:
             btn = QPushButton(label)
-            btn.setFixedSize(64, 32)
+            btn.setIcon(self.style().standardIcon(icon_type))
+            btn.setIconSize(QSize(14, 14))
+            btn.setFixedSize(80, 36)
             btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet(self._button_style(False))
             btn.clicked.connect(lambda _checked, n=name: self._on_clicked(n))
             layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -75,23 +77,26 @@ class NavSidebar(QWidget):
         if active:
             return (
                 f"QPushButton {{ "
-                f"  background-color: {COLORS['primary']}; "
-                f"  color: white; "
-                f"  border: none; border-radius: 6px; "
-                f"  font-size: 11px; font-weight: 600; "
-                f"  padding: 6px 4px; "
+                "  background-color: #FFFFFF; "
+                f"  color: {COLORS['text']}; "
+                f"  border: 1px solid {COLORS['border']}; "
+                f"  border-left: 3px solid {COLORS['primary']}; "
+                "  border-radius: 8px; "
+                "  font-size: 11px; font-weight: 600; "
+                "  text-align: left; padding: 6px 8px; "
                 f"}}"
             )
         return (
             f"QPushButton {{ "
-            f"  background-color: transparent; "
-            f"  color: {COLORS['text_muted']}; "
-            f"  border: none; border-radius: 6px; "
-            f"  font-size: 11px; "
-            f"  padding: 6px 4px; "
-            f"}} "
+                f"  background-color: transparent; "
+                f"  color: {COLORS['text_muted']}; "
+                "  border: 1px solid transparent; border-radius: 8px; "
+                "  font-size: 11px; "
+                "  text-align: left; padding: 6px 8px; "
+                f"}} "
             f"QPushButton:hover {{ "
-            f"  background-color: #E8E8E8; "
-            f"  color: {COLORS['text']}; "
-            f"}}"
+                "  background-color: #FFFFFF; "
+                f"  border-color: {COLORS['border']}; "
+                f"  color: {COLORS['text']}; "
+                f"}}"
         )

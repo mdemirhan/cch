@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QPersistentModelIndex, Qt, Signal
-from PySide6.QtWidgets import QLabel, QListView, QVBoxLayout, QWidget
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    QPersistentModelIndex,
+    QPoint,
+    Qt,
+    Signal,
+)
+from PySide6.QtWidgets import QLabel, QListView, QMenu, QVBoxLayout, QWidget
 
 from cch.models.sessions import SessionSummary
+from cch.ui.finder import show_in_file_manager
 from cch.ui.theme import COLORS
 from cch.ui.widgets.delegates import SessionDelegate
 
@@ -37,7 +45,8 @@ class SessionListModel(QAbstractListModel):
             return None
         s = self._sessions[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
-            return s.summary or s.first_prompt or s.session_id[:12]
+            title = s.summary or s.first_prompt or s.session_id[:12]
+            return " ".join(title.split())
         if role == Qt.ItemDataRole.UserRole:
             return s.session_id
         if role == Qt.ItemDataRole.UserRole + 1:
@@ -50,6 +59,10 @@ class SessionListModel(QAbstractListModel):
             return s.modified_at
         if role == Qt.ItemDataRole.UserRole + 5:
             return s.message_count
+        if role == Qt.ItemDataRole.UserRole + 6:
+            return s.provider
+        if role == Qt.ItemDataRole.UserRole + 7:
+            return s.file_path
         return None
 
 
@@ -68,10 +81,10 @@ class DetailListPanel(QWidget):
         # Header
         self._header = QLabel("Sessions")
         self._header.setStyleSheet(
-            f"font-weight: 600; font-size: 13px; padding: 12px 14px; "
+            f"font-weight: 700; font-size: 14px; padding: 12px 16px; "
             f"background-color: {COLORS['panel_bg']}; "
             f"border-bottom: 1px solid {COLORS['border']}; "
-            f"color: {COLORS['text']}; letter-spacing: 0.3px;"
+            f"color: {COLORS['text']};"
         )
         layout.addWidget(self._header)
 
@@ -83,6 +96,8 @@ class DetailListPanel(QWidget):
         self._list.setMouseTracking(True)
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._list.clicked.connect(self._on_item_clicked)
+        self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self._list)
 
         self.setStyleSheet(f"background-color: {COLORS['panel_bg']};")
@@ -95,3 +110,17 @@ class DetailListPanel(QWidget):
         session = self._model.session_at(index.row())
         if session:
             self.session_selected.emit(session.session_id)
+
+    def _on_context_menu(self, pos: QPoint) -> None:
+        index = self._list.indexAt(pos)
+        if not index.isValid():
+            return
+        session = self._model.session_at(index.row())
+        if session is None or not session.file_path:
+            return
+
+        menu = QMenu(self)
+        show_action = menu.addAction("Show in Finder")
+        selected = menu.exec(self._list.viewport().mapToGlobal(pos))
+        if selected == show_action:
+            show_in_file_manager(session.file_path, parent_dir=True)

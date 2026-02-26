@@ -11,7 +11,6 @@ from cch.data.indexer import Indexer
 from cch.data.search import SearchEngine
 from cch.services.analytics_service import AnalyticsService
 from cch.services.cost import estimate_cost
-from cch.services.export_service import ExportService
 from cch.services.project_service import ProjectService
 from cch.services.search_service import SearchService
 from cch.services.session_service import SessionService
@@ -44,6 +43,15 @@ class TestSessionService:
         detail = result.ok_value
         assert detail.session_id == "test-session-001"
         assert len(detail.messages) >= 5
+
+    @pytest.mark.asyncio
+    async def test_get_session_detail_paged(self, indexed_db: Database) -> None:
+        svc = SessionService(indexed_db)
+        result = await svc.get_session_detail("test-session-001", limit=2, offset=1)
+        assert isinstance(result, Ok)
+        detail = result.ok_value
+        assert detail.message_count >= 5
+        assert len(detail.messages) == 2
 
     @pytest.mark.asyncio
     async def test_get_session_not_found(self, indexed_db: Database) -> None:
@@ -117,34 +125,6 @@ class TestSearchService:
         svc = SearchService(engine)
         result = await svc.search("")
         assert isinstance(result, Err)
-
-
-class TestExportService:
-    @pytest.mark.asyncio
-    async def test_export_markdown(self, indexed_db: Database) -> None:
-        session_svc = SessionService(indexed_db)
-        export_svc = ExportService(session_svc)
-        result = await export_svc.export_session_markdown("test-session-001")
-        assert isinstance(result, Ok)
-        md = result.ok_value
-        assert "# Session:" in md
-        assert "bug" in md.lower()
-
-    @pytest.mark.asyncio
-    async def test_export_json(self, indexed_db: Database) -> None:
-        session_svc = SessionService(indexed_db)
-        export_svc = ExportService(session_svc)
-        result = await export_svc.export_session_json("test-session-001")
-        assert isinstance(result, Ok)
-        assert "test-session-001" in result.ok_value
-
-    @pytest.mark.asyncio
-    async def test_export_csv(self, indexed_db: Database) -> None:
-        session_svc = SessionService(indexed_db)
-        export_svc = ExportService(session_svc)
-        result = await export_svc.export_session_csv("test-session-001")
-        assert isinstance(result, Ok)
-        assert "uuid,role" in result.ok_value
 
 
 class TestCostEstimation:

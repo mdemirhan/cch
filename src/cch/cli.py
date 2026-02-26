@@ -12,7 +12,7 @@ from cch.config import Config
 
 app = typer.Typer(
     name="cch",
-    help="Claude Code History — Interactive dashboard for Claude Code session data.",
+    help="CCH - Code CLI Helper for Claude/Codex/Gemini session data.",
     invoke_without_command=True,
 )
 
@@ -24,12 +24,22 @@ def serve(
         Path | None,
         typer.Option("--claude-dir", help="Path to Claude data directory"),
     ] = None,
+    codex_dir: Annotated[
+        Path | None,
+        typer.Option("--codex-dir", help="Path to Codex data directory"),
+    ] = None,
+    gemini_dir: Annotated[
+        Path | None,
+        typer.Option("--gemini-dir", help="Path to Gemini data directory"),
+    ] = None,
 ) -> None:
     """Start the CCH desktop application."""
     if ctx.invoked_subcommand is not None:
         return
     config = Config(
         claude_dir=claude_dir or Path.home() / ".claude",
+        codex_dir=codex_dir or Path.home() / ".codex",
+        gemini_dir=gemini_dir or Path.home() / ".gemini",
     )
     from cch.ui.app import run_app
 
@@ -42,11 +52,21 @@ def reindex(
         Path | None,
         typer.Option("--claude-dir", help="Path to Claude data directory"),
     ] = None,
+    codex_dir: Annotated[
+        Path | None,
+        typer.Option("--codex-dir", help="Path to Codex data directory"),
+    ] = None,
+    gemini_dir: Annotated[
+        Path | None,
+        typer.Option("--gemini-dir", help="Path to Gemini data directory"),
+    ] = None,
     force: Annotated[bool, typer.Option("--force", help="Force full re-index")] = False,
 ) -> None:
     """Force rebuild the SQLite index."""
     config = Config(
         claude_dir=claude_dir or Path.home() / ".claude",
+        codex_dir=codex_dir or Path.home() / ".codex",
+        gemini_dir=gemini_dir or Path.home() / ".gemini",
     )
     asyncio.run(_do_reindex(config, force))
 
@@ -56,7 +76,10 @@ async def _do_reindex(config: Config, force: bool) -> None:
     from cch.data.db import Database
     from cch.data.indexer import Indexer
 
-    typer.echo(f"Indexing sessions from {config.projects_dir}...")
+    typer.echo(
+        "Indexing sessions from "
+        f"{config.projects_dir}, {config.codex_sessions_dir}, {config.gemini_tmp_dir}..."
+    )
 
     async with Database(config.db_path) as db:
         indexer = Indexer(db, config)

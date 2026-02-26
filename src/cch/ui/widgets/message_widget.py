@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from html import escape
 
 from cch.models.sessions import MessageView
 from cch.ui.theme import MONO_FAMILY, format_tokens
@@ -21,18 +22,24 @@ def _next_block_id(prefix: str = "block") -> str:
     return f"{prefix}_{_block_counter}"
 
 
-def classify_message(msg: MessageView) -> set[str]:
+def classify_message(
+    msg: MessageView,
+    *,
+    content_blocks: list[dict[str, object]] | None = None,
+) -> set[str]:
     """Return the set of content categories present in a message."""
     categories: set[str] = set()
+    blocks = (
+        content_blocks if content_blocks is not None else _parse_content_json(msg.content_json)
+    )
 
     if msg.type in ("summary", "system"):
         categories.add("system")
         return categories
 
     if msg.role == "user" and msg.type == "user":
-        content_blocks = _parse_content_json(msg.content_json)
-        has_text = any(b.get("type") == "text" for b in content_blocks)
-        is_tool_result = any(b.get("type") == "tool_result" for b in content_blocks)
+        has_text = any(b.get("type") == "text" for b in blocks)
+        is_tool_result = any(b.get("type") == "tool_result" for b in blocks)
 
         if is_tool_result:
             categories.add("tool_result")
@@ -40,8 +47,7 @@ def classify_message(msg: MessageView) -> set[str]:
             categories.add("user")
 
     elif msg.role == "assistant":
-        content_blocks = _parse_content_json(msg.content_json)
-        for block in content_blocks:
+        for block in blocks:
             match block.get("type"):
                 case "text":
                     if str(block.get("text", "")).strip():
@@ -60,24 +66,24 @@ def classify_message(msg: MessageView) -> set[str]:
 
 def render_message_html(msg: MessageView) -> str:
     """Render a single message as an HTML fragment with data-categories."""
-    categories = classify_message(msg)
+    content_blocks = _parse_content_json(msg.content_json)
+    categories = classify_message(msg, content_blocks=content_blocks)
 
     if msg.type in ("system", "summary"):
         return _render_system(msg, categories)
 
     if msg.type == "user" and msg.role == "user":
-        content_blocks = _parse_content_json(msg.content_json)
         has_text = any(b.get("type") == "text" for b in content_blocks)
         is_tool_result = any(b.get("type") == "tool_result" for b in content_blocks)
 
         if is_tool_result and not has_text:
-            return _render_tool_result(content_blocks, categories)
+            return _render_tool_result(msg, content_blocks, categories)
 
         if msg.content_text.strip():
             return _render_user(msg, categories)
 
     if msg.role == "assistant":
-        return _render_assistant(msg, categories)
+        return _render_assistant(msg, categories, content_blocks)
 
     return ""
 
@@ -90,15 +96,24 @@ def _cats_attr(categories: set[str]) -> str:
     return ",".join(sorted(categories))
 
 
+def _message_attrs(msg: MessageView, categories: set[str], cls: str) -> str:
+    cats = _cats_attr(categories)
+    return (
+        f'class="message {cls}" '
+        f'data-categories="{cats}" '
+        f'data-message-uuid="{escape(msg.uuid)}" '
+        f'id="msg-{escape(msg.uuid)}"'
+    )
+
+
 def _render_user(msg: MessageView, categories: set[str]) -> str:
     """Render a user message."""
     md_html = render_markdown(msg.content_text[:5000])
     body = _extract_body(md_html)
 
     timestamp = msg.timestamp[:19] if msg.timestamp else ""
-    cats = _cats_attr(categories)
     return (
-        f'<div class="message user" data-categories="{cats}">'
+        f"<div {_message_attrs(msg, categories, 'user')}>"
         f'<div class="msg-header">'
         f'<span class="role-badge user">You</span>'
         f'<span class="timestamp">{timestamp}</span>'
@@ -107,10 +122,12 @@ def _render_user(msg: MessageView, categories: set[str]) -> str:
     )
 
 
-def _render_assistant(msg: MessageView, categories: set[str]) -> str:
+def _render_assistant(
+    msg: MessageView,
+    categories: set[str],
+    content_blocks: list[dict[str, object]],
+) -> str:
     """Render an assistant message with text, thinking, and tool calls."""
-    content_blocks = _parse_content_json(msg.content_json)
-
     has_text = False
     has_thinking = False
     has_tool_use = False
@@ -188,8 +205,7 @@ def _render_assistant(msg: MessageView, categories: set[str]) -> str:
             parts.append(render_tool_call_html(tc.tool_name, tc.input_json, block_id=bid))
 
     body = "\n".join(parts)
-    cats = _cats_attr(categories)
-    return f'<div class="message assistant" data-categories="{cats}">{body}</div>'
+    return f"<div {_message_attrs(msg, categories, 'assistant')}>{body}</div>"
 
 
 def _render_tool_call_only(
@@ -220,8 +236,7 @@ def _render_tool_call_only(
         return ""
 
     body = "\n".join(parts)
-    cats = _cats_attr(categories)
-    return f'<div class="message tool-call-only" data-categories="{cats}">{body}</div>'
+    return f"<div {_message_attrs(msg, categories, 'tool-call-only')}>{body}</div>"
 
 
 def _render_system(msg: MessageView, categories: set[str]) -> str:
@@ -233,9 +248,8 @@ def _render_system(msg: MessageView, categories: set[str]) -> str:
     md_html = render_markdown(msg.content_text[:5000])
     body = _extract_body(md_html)
 
-    cats = _cats_attr(categories)
     return (
-        f'<div class="message system" data-categories="{cats}">'
+        f"<div {_message_attrs(msg, categories, 'system')}>"
         f'<div class="msg-header">'
         f'<span class="role-badge system">{label}</span>'
         f'<span class="timestamp">{timestamp}</span>'
@@ -244,7 +258,9 @@ def _render_system(msg: MessageView, categories: set[str]) -> str:
     )
 
 
-def _render_tool_result(blocks: list[dict[str, object]], categories: set[str]) -> str:
+def _render_tool_result(
+    msg: MessageView, blocks: list[dict[str, object]], categories: set[str]
+) -> str:
     """Render tool result blocks."""
     from html import escape
 
@@ -275,8 +291,7 @@ def _render_tool_result(blocks: list[dict[str, object]], categories: set[str]) -
     if not parts:
         return ""
 
-    cats = _cats_attr(categories)
-    return f'<div class="message tool-result" data-categories="{cats}">{"".join(parts)}</div>'
+    return f"<div {_message_attrs(msg, categories, 'tool-result')}>{''.join(parts)}</div>"
 
 
 def _parse_content_json(content_json: str) -> list[dict[str, object]]:

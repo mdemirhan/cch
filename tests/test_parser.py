@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from cch.data.parser import parse_session_file
@@ -83,3 +84,112 @@ class TestParseSessionFile:
         assistant_msgs = [m for m in messages if m.role == "assistant"]
         for m in assistant_msgs:
             assert m.model == "claude-opus-4-6"
+
+    def test_malformed_field_types_do_not_crash(self, tmp_path: Path) -> None:
+        malformed = {
+            "type": "assistant",
+            "uuid": 123,
+            "timestamp": 456,
+            "message": {
+                "role": {"bad": "shape"},
+                "model": None,
+                "content": ["ok"],
+                "usage": "bad-usage",
+            },
+        }
+        path = tmp_path / "malformed.jsonl"
+        path.write_text(json.dumps(malformed), encoding="utf-8")
+
+        parsed = list(parse_session_file(path))
+        assert len(parsed) == 1
+        msg = parsed[0]
+        assert msg.uuid.startswith("malformed:msg:")
+        assert msg.timestamp == ""
+        assert msg.role == ""
+        assert msg.usage.input_tokens == 0
+
+    def test_parses_codex_format(self, tmp_path: Path) -> None:
+        lines = [
+            {
+                "timestamp": "2026-01-01T10:00:00.000Z",
+                "type": "session_meta",
+                "payload": {"id": "abc", "cwd": "/tmp/proj"},
+            },
+            {
+                "timestamp": "2026-01-01T10:00:00.100Z",
+                "type": "turn_context",
+                "payload": {"model": "gpt-5-codex"},
+            },
+            {
+                "timestamp": "2026-01-01T10:00:01.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hello"}],
+                },
+            },
+            {
+                "timestamp": "2026-01-01T10:00:02.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "shell",
+                    "arguments": "{\"command\": [\"ls\"]}",
+                    "call_id": "call-1",
+                },
+            },
+            {
+                "timestamp": "2026-01-01T10:00:03.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "done"}],
+                },
+            },
+        ]
+        path = tmp_path / "codex.jsonl"
+        path.write_text("\n".join(json.dumps(item) for item in lines), encoding="utf-8")
+
+        messages = list(parse_session_file(path, provider="codex", session_id="codex:abc"))
+        assert len(messages) == 3
+        assert messages[0].role == "user"
+        assert messages[1].content_blocks[0].type == "tool_use"
+        assert messages[2].model == "gpt-5-codex"
+
+    def test_parses_gemini_format(self, tmp_path: Path) -> None:
+        payload = {
+            "sessionId": "g-1",
+            "messages": [
+                {
+                    "id": "u1",
+                    "timestamp": "2026-01-01T10:00:00.000Z",
+                    "type": "user",
+                    "content": [{"text": "hello"}],
+                },
+                {
+                    "id": "a1",
+                    "timestamp": "2026-01-01T10:00:01.000Z",
+                    "type": "gemini",
+                    "content": "hi",
+                    "model": "gemini-3.1-pro-preview",
+                    "tokens": {"input": 10, "output": 5, "cached": 3},
+                    "thoughts": ["thinking"],
+                },
+                {
+                    "id": "i1",
+                    "timestamp": "2026-01-01T10:00:02.000Z",
+                    "type": "info",
+                    "content": "Request cancelled.",
+                },
+            ],
+        }
+        path = tmp_path / "gemini.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+        messages = list(parse_session_file(path, provider="gemini", session_id="gemini:g-1"))
+        assert len(messages) == 3
+        assert messages[1].role == "assistant"
+        assert messages[1].usage.input_tokens == 10
+        assert messages[1].content_blocks[0].type == "thinking"

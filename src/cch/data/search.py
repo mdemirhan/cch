@@ -21,6 +21,7 @@ class SearchEngine:
         query: str,
         roles: list[str] | None = None,
         project_id: str = "",
+        project_ids: list[str] | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> SearchResults:
@@ -29,7 +30,8 @@ class SearchEngine:
         Args:
             query: Full-text search query.
             roles: Filter by categories. Valid values: "user", "assistant",
-                   "system". None or empty means all.
+                   "tool_call", "thinking", "tool_result", "system".
+                   None or empty means all.
             project_id: Filter by project. Empty for all.
             limit: Maximum results to return.
             offset: Result offset for pagination.
@@ -50,15 +52,60 @@ class SearchEngine:
             role_clauses: list[str] = []
             for r in roles:
                 if r == "user":
-                    role_clauses.append("m.role = 'user'")
+                    role_clauses.append(
+                        "m.role = 'user' AND m.type = 'user' AND "
+                        "TRIM(COALESCE(m.content_text, '')) != '' AND "
+                        "EXISTS ("
+                        "  SELECT 1 FROM json_each(m.content_json) j "
+                        "  WHERE json_extract(j.value, '$.type') = 'text'"
+                        ")"
+                    )
                 elif r == "assistant":
-                    role_clauses.append("m.role = 'assistant'")
+                    role_clauses.append(
+                        "m.role = 'assistant' AND EXISTS ("
+                        "  SELECT 1 FROM json_each(m.content_json) j "
+                        "  WHERE json_extract(j.value, '$.type') = 'text' "
+                        "    AND TRIM(COALESCE(json_extract(j.value, '$.text'), '')) != ''"
+                        ")"
+                    )
+                elif r == "tool_call":
+                    role_clauses.append(
+                        "m.role = 'assistant' AND ("
+                        "EXISTS ("
+                        "  SELECT 1 FROM json_each(m.content_json) j "
+                        "  WHERE json_extract(j.value, '$.type') = 'tool_use'"
+                        ") OR "
+                        "EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.message_uuid = m.uuid)"
+                        ")"
+                    )
+                elif r == "thinking":
+                    role_clauses.append(
+                        "m.role = 'assistant' AND EXISTS ("
+                        "  SELECT 1 FROM json_each(m.content_json) j "
+                        "  WHERE json_extract(j.value, '$.type') = 'thinking' "
+                        "    AND TRIM(COALESCE(json_extract(j.value, '$.text'), '')) != ''"
+                        ")"
+                    )
+                elif r == "tool_result":
+                    role_clauses.append(
+                        "m.role = 'user' AND m.type = 'user' AND "
+                        "EXISTS ("
+                        "  SELECT 1 FROM json_each(m.content_json) j "
+                        "  WHERE json_extract(j.value, '$.type') = 'tool_result'"
+                        ")"
+                    )
                 elif r == "system":
                     role_clauses.append("m.type IN ('system', 'summary')")
             if role_clauses:
                 conditions.append("(" + " OR ".join(role_clauses) + ")")
 
-        if project_id:
+        if project_ids:
+            normalized_ids = [pid for pid in project_ids if pid]
+            if normalized_ids:
+                placeholders = ",".join("?" for _ in normalized_ids)
+                conditions.append(f"s.project_id IN ({placeholders})")
+                params.extend(normalized_ids)
+        elif project_id:
             conditions.append("s.project_id = ?")
             params.append(project_id)
 
@@ -87,7 +134,8 @@ class SearchEngine:
                 m.role,
                 m.timestamp,
                 snippet(messages_fts, 0, '<mark>', '</mark>', '...', 64) as snippet,
-                p.project_name
+                p.project_name,
+                COALESCE(s.provider, p.provider, 'claude') as provider
             FROM messages_fts f
             JOIN messages m ON m.rowid = f.rowid
             JOIN sessions s ON s.session_id = m.session_id
@@ -104,6 +152,7 @@ class SearchEngine:
                 message_uuid=row["message_uuid"],
                 session_id=row["session_id"],
                 project_name=row["project_name"] or "",
+                provider=row["provider"] or "claude",
                 role=row["role"] or "",
                 snippet=row["snippet"] or "",
                 timestamp=row["timestamp"] or "",
@@ -115,9 +164,14 @@ class SearchEngine:
 
 
 def _escape_fts_query(query: str) -> str:
-    """Escape a raw query for FTS5 by wrapping terms in quotes."""
+    """Escape a raw query for FTS5 by quoting terms safely."""
     terms = query.strip().split()
     if not terms:
         return '""'
-    escaped = [f'"{term}"' for term in terms]
+    escaped: list[str] = []
+    for term in terms:
+        if not term:
+            continue
+        safe_term = term.replace('"', '""')
+        escaped.append(f'"{safe_term}"')
     return " ".join(escaped)

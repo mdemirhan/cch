@@ -1,7 +1,7 @@
 [project]
 name = "cch"
 version = "0.1.0"
-description = "Claude Code History — Interactive dashboard for Claude Code session data"
+description = "CCH - Code CLI Helper"
 requires-python = ">=3.13"
 dependencies = [
     "PySide6>=6.8.0",

@@ -1,4 +1,4 @@
-"""Custom item delegates for QListView — ProjectDelegate, SessionDelegate, SearchResultDelegate."""
+"""Custom list delegates for project, session and search rows."""
 
 from __future__ import annotations
 
@@ -6,33 +6,117 @@ import re
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
+from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
-from cch.ui.theme import COLORS, format_relative_time, format_tokens
+from cch.ui.theme import (
+    COLORS,
+    format_relative_time,
+    format_tokens,
+    provider_color,
+    provider_label,
+)
 
-# Alternating row backgrounds for visual separation
 _ROW_BG_EVEN = QColor(COLORS["panel_bg"])
-_ROW_BG_ODD = QColor("#F5F5F5")
+_ROW_BG_ODD = QColor("#F5F6F7")
 _SELECTED_BG = QColor(COLORS["primary_light"])
-_HOVER_BG = QColor("#F0F0F0")
-_BORDER_COLOR = QColor("#EBEBEB")
+_HOVER_BG = QColor("#EEF3F7")
+_BORDER_COLOR = QColor("#E8E8E8")
 
 
 def _row_background(index: QModelIndex | QPersistentModelIndex) -> QColor:
-    """Return alternating background color for a row."""
     return _ROW_BG_EVEN if index.row() % 2 == 0 else _ROW_BG_ODD
 
 
-class ProjectDelegate(QStyledItemDelegate):
-    """Renders a project row: name, path snippet, session count, last activity."""
+def _elide_middle(text: str, max_width: int, painter: QPainter) -> str:
+    return painter.fontMetrics().elidedText(text, Qt.TextElideMode.ElideMiddle, max_width)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
+
+def _wrap_and_elide(text: str, max_width: int, max_lines: int, painter: QPainter) -> str:
+    """Wrap text to max_lines and ellide the final line if needed."""
+    if max_width <= 0 or max_lines <= 0:
+        return ""
+    normalized = " ".join(text.split())
+    if not normalized:
+        return ""
+
+    fm = painter.fontMetrics()
+    words = normalized.split(" ")
+    lines: list[str] = []
+    current = ""
+
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        if fm.horizontalAdvance(candidate) <= max_width:
+            current = candidate
+            continue
+
+        if current:
+            lines.append(current)
+            if len(lines) >= max_lines:
+                current = ""
+                break
+
+        if fm.horizontalAdvance(word) <= max_width:
+            current = word
+            continue
+
+        chunk = ""
+        for char in word:
+            trial = chunk + char
+            if fm.horizontalAdvance(trial) <= max_width or not chunk:
+                chunk = trial
+                continue
+            lines.append(chunk)
+            if len(lines) >= max_lines:
+                chunk = ""
+                break
+            chunk = char
+        current = chunk
+        if len(lines) >= max_lines:
+            current = ""
+            break
+
+    if current and len(lines) < max_lines:
+        lines.append(current)
+
+    if not lines:
+        return fm.elidedText(normalized, Qt.TextElideMode.ElideRight, max_width)
+    if len(lines) == max_lines:
+        lines[-1] = fm.elidedText(lines[-1], Qt.TextElideMode.ElideRight, max_width)
+    return "\n".join(lines)
+
+
+def _draw_provider_badge(
+    painter: QPainter,
+    *,
+    provider: str,
+    top: int,
+    right: int,
+) -> QRect:
+    label = provider_label(provider)
+    color = provider_color(provider)
+
+    font = QFont(painter.font().family(), 9, QFont.Weight.DemiBold)
+    painter.setFont(font)
+    fm = painter.fontMetrics()
+    badge_w = max(fm.horizontalAdvance(label) + 12, 52)
+    badge_rect = QRect(right - badge_w, top, badge_w, 18)
+
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(color))
+    painter.drawRoundedRect(badge_rect, 9, 9)
+    painter.setPen(QColor("#FFFFFF"))
+    painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, label)
+    return badge_rect
+
+
+class ProjectDelegate(QStyledItemDelegate):
+    """Project row: name, provider badge, path, relative time and session count."""
 
     def sizeHint(
         self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
     ) -> QSize:
-        return QSize(option.rect.width(), 62)
+        return QSize(option.rect.width(), 72)
 
     def paint(
         self,
@@ -44,7 +128,6 @@ class ProjectDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = option.rect
 
-        # Background with selection/hover/alternating
         if option.state & QStyle.StateFlag.State_Selected:
             painter.fillRect(rect, _SELECTED_BG)
         elif option.state & QStyle.StateFlag.State_MouseOver:
@@ -52,70 +135,74 @@ class ProjectDelegate(QStyledItemDelegate):
         else:
             painter.fillRect(rect, _row_background(index))
 
-        # Data from model
-        name = index.data(Qt.ItemDataRole.DisplayRole) or ""
-        path = index.data(Qt.ItemDataRole.UserRole + 1) or ""
-        count = index.data(Qt.ItemDataRole.UserRole + 2) or 0
-        last_activity = index.data(Qt.ItemDataRole.UserRole + 3) or ""
+        name = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        path = str(index.data(Qt.ItemDataRole.UserRole + 1) or "")
+        count = int(index.data(Qt.ItemDataRole.UserRole + 2) or 0)
+        last_activity = str(index.data(Qt.ItemDataRole.UserRole + 3) or "")
+        provider = str(index.data(Qt.ItemDataRole.UserRole + 4) or "claude")
 
-        left = rect.left() + 14
-        right = rect.right() - 14
+        left = rect.left() + 16
+        right = rect.right() - 16
 
-        # Project name
-        font = QFont(painter.font().family(), 13, QFont.Weight.DemiBold)
-        painter.setFont(font)
-        painter.setPen(QColor(COLORS["text"]))
-        name_rect = QRect(left, rect.top() + 10, right - left - 70, 20)
-        painter.drawText(
-            name_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, name
+        badge_rect = _draw_provider_badge(
+            painter,
+            provider=provider,
+            top=rect.top() + 10,
+            right=right,
         )
 
-        # Session count badge (right-aligned, pill-shaped)
-        painter.setFont(QFont(painter.font().family(), 10))
         count_text = str(count)
-        fm = painter.fontMetrics()
-        badge_w = max(fm.horizontalAdvance(count_text) + 14, 28)
-        badge_h = 18
-        badge_x = right - badge_w
-        badge_y = rect.top() + 11
-        badge_rect = QRect(badge_x, badge_y, badge_w, badge_h)
+        painter.setFont(QFont(painter.font().family(), 10, QFont.Weight.DemiBold))
+        count_w = painter.fontMetrics().horizontalAdvance(count_text) + 12
+        count_rect = QRect(badge_rect.left() - count_w - 8, rect.top() + 10, count_w, 18)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#EAEAEA"))
-        painter.drawRoundedRect(badge_rect, 9, 9)
-        painter.setPen(QColor(COLORS["text_muted"]))
-        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, count_text)
+        painter.setBrush(QColor("#E6E8EA"))
+        painter.drawRoundedRect(count_rect, 9, 9)
+        painter.setPen(QColor("#616A72"))
+        painter.drawText(count_rect, Qt.AlignmentFlag.AlignCenter, count_text)
 
-        # Path and last activity
-        painter.setFont(QFont(painter.font().family(), 11))
-        painter.setPen(QColor(COLORS["text_muted"]))
-        display_path = path
-        if len(display_path) > 40:
-            display_path = "..." + display_path[-37:]
-        sub_rect = QRect(left, rect.top() + 34, right - left, 18)
-        sub_text = display_path
-        if last_activity:
-            sub_text += f"  ·  {format_relative_time(last_activity)}"
+        name_right = max(left, count_rect.left() - 10)
+        painter.setFont(QFont(painter.font().family(), 14, QFont.Weight.DemiBold))
+        painter.setPen(QColor(COLORS["text"]))
+        name_text = _elide_middle(name, name_right - left, painter)
+        name_rect = QRect(left, rect.top() + 10, name_right - left, 20)
         painter.drawText(
-            sub_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, sub_text
+            name_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            name_text,
         )
 
-        # Bottom separator line
+        painter.setFont(QFont(painter.font().family(), 11))
+        painter.setPen(QColor("#7A848C"))
+        path_text = _elide_middle(path, right - left, painter)
+        path_rect = QRect(left, rect.top() + 36, right - left, 17)
+        painter.drawText(
+            path_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            path_text,
+        )
+
+        if last_activity:
+            painter.setPen(QColor("#9AA3AA"))
+            time_rect = QRect(left, rect.top() + 54, right - left, 14)
+            painter.drawText(
+                time_rect,
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                format_relative_time(last_activity),
+            )
+
         painter.setPen(QPen(_BORDER_COLOR, 1))
         painter.drawLine(rect.left() + 14, rect.bottom(), rect.right() - 14, rect.bottom())
-
         painter.restore()
 
 
 class SessionDelegate(QStyledItemDelegate):
-    """Renders a session row: first prompt, model, token counts, timestamp."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
+    """Session row: summary, model/meta, tokens/time and provider badge."""
 
     def sizeHint(
         self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
     ) -> QSize:
-        return QSize(option.rect.width(), 68)
+        return QSize(option.rect.width(), 92)
 
     def paint(
         self,
@@ -129,7 +216,6 @@ class SessionDelegate(QStyledItemDelegate):
 
         if option.state & QStyle.StateFlag.State_Selected:
             painter.fillRect(rect, _SELECTED_BG)
-            # Draw left accent bar on selected item
             painter.fillRect(
                 QRect(rect.left(), rect.top(), 3, rect.height()),
                 QColor(COLORS["primary"]),
@@ -139,65 +225,74 @@ class SessionDelegate(QStyledItemDelegate):
         else:
             painter.fillRect(rect, _row_background(index))
 
-        summary = index.data(Qt.ItemDataRole.DisplayRole) or ""
-        model = index.data(Qt.ItemDataRole.UserRole + 1) or ""
-        input_tokens = index.data(Qt.ItemDataRole.UserRole + 2) or 0
-        output_tokens = index.data(Qt.ItemDataRole.UserRole + 3) or 0
-        modified = index.data(Qt.ItemDataRole.UserRole + 4) or ""
-        msg_count = index.data(Qt.ItemDataRole.UserRole + 5) or 0
+        summary = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        model = str(index.data(Qt.ItemDataRole.UserRole + 1) or "")
+        input_tokens = int(index.data(Qt.ItemDataRole.UserRole + 2) or 0)
+        output_tokens = int(index.data(Qt.ItemDataRole.UserRole + 3) or 0)
+        modified = str(index.data(Qt.ItemDataRole.UserRole + 4) or "")
+        msg_count = int(index.data(Qt.ItemDataRole.UserRole + 5) or 0)
+        provider = str(index.data(Qt.ItemDataRole.UserRole + 6) or "claude")
 
-        left = rect.left() + 14
-        right = rect.right() - 14
+        left = rect.left() + 16
+        right = rect.right() - 16
+        badge_rect = _draw_provider_badge(
+            painter,
+            provider=provider,
+            top=rect.top() + 10,
+            right=right,
+        )
 
-        # Summary (first line)
-        painter.setFont(QFont(painter.font().family(), 12))
+        painter.setFont(QFont(painter.font().family(), 13, QFont.Weight.DemiBold))
         painter.setPen(QColor(COLORS["text"]))
-        summary_display = summary[:55] + ("..." if len(summary) > 55 else "")
-        summary_rect = QRect(left, rect.top() + 8, right - left, 20)
+        summary_width = max(0, badge_rect.left() - left - 8)
+        summary_text = _wrap_and_elide(summary, summary_width, 2, painter)
         painter.drawText(
-            summary_rect,
+            QRect(left, rect.top() + 8, summary_width, 34),
+            Qt.AlignmentFlag.AlignLeft
+            | Qt.AlignmentFlag.AlignTop
+            | Qt.TextFlag.TextWordWrap
+            | Qt.TextFlag.TextWrapAnywhere,
+            summary_text,
+        )
+
+        painter.setFont(QFont(painter.font().family(), 11))
+        painter.setPen(QColor("#707A83"))
+        meta = f"{model or 'Unknown model'}  ·  {msg_count} msgs"
+        meta_text = _elide_middle(meta, right - left, painter)
+        painter.drawText(
+            QRect(left, rect.top() + 46, right - left, 16),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            summary_display,
+            meta_text,
         )
 
-        # Second line: model + tokens + messages
-        painter.setFont(QFont(painter.font().family(), 10))
-        painter.setPen(QColor(COLORS["text_muted"]))
-        token_str = f"{format_tokens(input_tokens)}\u2193 {format_tokens(output_tokens)}\u2191"
-        meta = f"{model}  \u00b7  {msg_count} msgs  \u00b7  {token_str}"
-        meta_rect = QRect(left, rect.top() + 28, right - left, 16)
+        painter.setPen(QColor("#8A949B"))
+        token_text = f"{format_tokens(input_tokens)} in · {format_tokens(output_tokens)} out"
+        token_width = max(0, right - left - 96)
+        token_text = _elide_middle(token_text, token_width, painter)
         painter.drawText(
-            meta_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, meta
+            QRect(left, rect.top() + 66, token_width, 16),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            token_text,
         )
-
-        # Third line: relative time
         if modified:
-            painter.setFont(QFont(painter.font().family(), 10))
-            painter.setPen(QColor("#B0B0B0"))
-            time_rect = QRect(left, rect.top() + 44, right - left, 16)
             painter.drawText(
-                time_rect,
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                QRect(right - 90, rect.top() + 66, 90, 16),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 format_relative_time(modified),
             )
 
-        # Bottom separator
         painter.setPen(QPen(_BORDER_COLOR, 1))
         painter.drawLine(rect.left() + 14, rect.bottom(), rect.right() - 14, rect.bottom())
-
         painter.restore()
 
 
 class SearchResultDelegate(QStyledItemDelegate):
-    """Renders a search result row: snippet, role, project, timestamp."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
+    """Search result row: snippet, role, provider badge, project and timestamp."""
 
     def sizeHint(
         self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
     ) -> QSize:
-        return QSize(option.rect.width(), 64)
+        return QSize(option.rect.width(), 72)
 
     def paint(
         self,
@@ -216,65 +311,61 @@ class SearchResultDelegate(QStyledItemDelegate):
         else:
             painter.fillRect(rect, _row_background(index))
 
-        snippet = index.data(Qt.ItemDataRole.DisplayRole) or ""
-        role = index.data(Qt.ItemDataRole.UserRole + 1) or ""
-        project = index.data(Qt.ItemDataRole.UserRole + 2) or ""
-        timestamp = index.data(Qt.ItemDataRole.UserRole + 3) or ""
+        snippet = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        role = str(index.data(Qt.ItemDataRole.UserRole + 1) or "")
+        project = str(index.data(Qt.ItemDataRole.UserRole + 2) or "")
+        timestamp = str(index.data(Qt.ItemDataRole.UserRole + 3) or "")
+        provider = str(index.data(Qt.ItemDataRole.UserRole + 4) or "claude")
 
-        left = rect.left() + 14
-        right = rect.right() - 14
+        left = rect.left() + 16
+        right = rect.right() - 16
 
-        # Role indicator (small colored dot + text)
         role_color = COLORS["primary"] if role == "user" else COLORS["success"]
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(role_color))
-        dot_y = rect.top() + 13
-        painter.drawEllipse(left, dot_y, 6, 6)
+        painter.drawEllipse(left, rect.top() + 13, 6, 6)
 
         painter.setPen(QColor(role_color))
         painter.setFont(QFont(painter.font().family(), 10, QFont.Weight.DemiBold))
-        role_rect = QRect(left + 10, rect.top() + 6, 60, 16)
         painter.drawText(
-            role_rect,
+            QRect(left + 10, rect.top() + 7, 72, 14),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             role.capitalize(),
         )
 
-        # Project badge
-        if project:
-            painter.setPen(QColor(COLORS["text_muted"]))
-            painter.setFont(QFont(painter.font().family(), 10))
-            proj_rect = QRect(left + 75, rect.top() + 6, right - left - 175, 16)
-            painter.drawText(
-                proj_rect,
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                project,
-            )
-
-        # Timestamp (right-aligned)
+        badge_rect = _draw_provider_badge(
+            painter,
+            provider=provider,
+            top=rect.top() + 8,
+            right=right,
+        )
         if timestamp:
+            painter.setPen(QColor("#95A0A7"))
             painter.setFont(QFont(painter.font().family(), 10))
-            painter.setPen(QColor("#B0B0B0"))
-            time_rect = QRect(right - 100, rect.top() + 6, 100, 16)
             painter.drawText(
-                time_rect,
+                QRect(badge_rect.left() - 98, rect.top() + 8, 92, 18),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 format_relative_time(timestamp),
             )
 
-        # Snippet (strip HTML tags for plain text rendering)
-        plain_snippet = re.sub(r"<[^>]+>", "", snippet)[:80]
-        painter.setFont(QFont(painter.font().family(), 12))
-        painter.setPen(QColor(COLORS["text"]))
-        snippet_rect = QRect(left, rect.top() + 26, right - left, 20)
+        painter.setPen(QColor("#7A848C"))
+        painter.setFont(QFont(painter.font().family(), 10))
+        project_width = max(0, badge_rect.left() - left - 186)
         painter.drawText(
-            snippet_rect,
+            QRect(left + 82, rect.top() + 7, project_width, 14),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            plain_snippet,
+            _elide_middle(project, project_width, painter),
         )
 
-        # Bottom separator
+        plain_snippet = re.sub(r"<[^>]+>", "", snippet).strip()
+        painter.setPen(QColor(COLORS["text"]))
+        painter.setFont(QFont(painter.font().family(), 12))
+        painter.drawText(
+            QRect(left, rect.top() + 30, right - left, 28),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+            _elide_middle(plain_snippet, right - left, painter),
+        )
+
         painter.setPen(QPen(_BORDER_COLOR, 1))
         painter.drawLine(rect.left() + 14, rect.bottom(), rect.right() - 14, rect.bottom())
-
         painter.restore()

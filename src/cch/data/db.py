@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS projects (
     project_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL DEFAULT 'claude',
     project_path TEXT NOT NULL,
     project_name TEXT NOT NULL,
     session_count INTEGER DEFAULT 0,
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
     project_id TEXT REFERENCES projects,
+    provider TEXT NOT NULL DEFAULT 'claude',
     file_path TEXT NOT NULL,
     first_prompt TEXT,
     summary TEXT,
@@ -105,7 +107,9 @@ END;
 
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_modified ON sessions(modified_at);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_messages_session_seq ON messages(session_id, sequence_num);
 CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(type);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_name ON tool_calls(tool_name);
@@ -127,6 +131,7 @@ class Database:
         await self._conn.execute("PRAGMA synchronous=NORMAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._conn.executescript(SCHEMA_SQL)
+        await self._ensure_schema_migrations()
         await self._conn.commit()
         return self
 
@@ -168,3 +173,30 @@ class Database:
     async def commit(self) -> None:
         """Commit the current transaction."""
         await self.conn.commit()
+
+    async def _ensure_schema_migrations(self) -> None:
+        """Apply lightweight schema migrations for new columns and indexes."""
+        await self._ensure_column("projects", "provider", "TEXT NOT NULL DEFAULT 'claude'")
+        await self._ensure_column("sessions", "provider", "TEXT NOT NULL DEFAULT 'claude'")
+
+        await self.conn.execute(
+            "UPDATE projects SET provider = 'claude' WHERE provider IS NULL OR provider = ''"
+        )
+        await self.conn.execute(
+            "UPDATE sessions SET provider = 'claude' WHERE provider IS NULL OR provider = ''"
+        )
+
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_projects_provider ON projects(provider)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_provider ON sessions(provider)"
+        )
+
+    async def _ensure_column(self, table: str, column: str, declaration: str) -> None:
+        """Add a column if it does not already exist."""
+        rows = await self.fetch_all(f"PRAGMA table_info({table})")
+        existing = {str(row["name"]) for row in rows}
+        if column in existing:
+            return
+        await self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")

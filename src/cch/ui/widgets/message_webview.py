@@ -9,7 +9,13 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from cch.models.sessions import SessionDetail
-from cch.ui.theme import format_cost, format_datetime, format_duration_ms, format_tokens
+from cch.ui.theme import (
+    format_cost,
+    format_datetime,
+    format_duration_ms,
+    format_tokens,
+    provider_label,
+)
 from cch.ui.widgets.message_widget import render_message_html
 
 # Filter definitions: (name, label, color)
@@ -23,6 +29,9 @@ _FILTERS = [
 ]
 
 _ALL_FILTER_NAMES = [name for name, _, _ in _FILTERS]
+_VALID_FILTERS = set(_ALL_FILTER_NAMES)
+_DEFAULT_ACTIVE_FILTERS = ["user", "assistant"]
+_PERSISTED_ACTIVE_FILTERS: list[str] = list(_DEFAULT_ACTIVE_FILTERS)
 
 
 def _load_template() -> str:
@@ -63,6 +72,8 @@ def _build_session_header(detail: SessionDetail) -> str:
     meta_parts: list[str] = []
     if detail.project_name:
         meta_parts.append(escape(detail.project_name))
+    if detail.provider:
+        meta_parts.append(escape(provider_label(detail.provider)))
     if detail.model:
         meta_parts.append(escape(detail.model))
     if detail.git_branch:
@@ -90,16 +101,34 @@ def _build_session_header(detail: SessionDetail) -> str:
     )
 
 
-def _build_filter_chips() -> str:
+def _build_filter_chips(active_filters: set[str]) -> str:
     """Build the HTML for filter chip buttons."""
     chips: list[str] = []
     for name, label, color in _FILTERS:
+        classes = "filter-chip"
+        if name not in active_filters:
+            classes += " inactive"
         chips.append(
-            f'<button class="filter-chip" data-filter="{name}" '
+            f'<button class="{classes}" data-filter="{name}" '
             f'style="background-color: {color};" '
             f"onclick=\"toggleFilter('{name}')\">{escape(label)}</button>"
         )
     return "\n".join(chips)
+
+
+def _normalize_filters(raw: object) -> list[str] | None:
+    """Normalize a raw JS list of filter names into known ordered names."""
+    if not isinstance(raw, list):
+        return None
+    selected = {item for item in raw if isinstance(item, str) and item in _VALID_FILTERS}
+    return [name for name in _ALL_FILTER_NAMES if name in selected]
+
+
+def _filters_js_array(filters: list[str]) -> str:
+    """Serialize a list of filter names as a JS array literal."""
+    if not filters:
+        return "[]"
+    return "[" + ", ".join(f"'{name}'" for name in filters) + "]"
 
 
 class MessageWebView(QWidget):
@@ -118,14 +147,62 @@ class MessageWebView(QWidget):
 
         self._webview = QWebEngineView()
         layout.addWidget(self._webview)
+        self._pending_detail: SessionDetail | None = None
+        self._pending_focus_message_uuid: str = ""
+        self._current_focus_message_uuid: str = ""
+        self._render_generation = 0
+        self._webview.loadFinished.connect(self._on_load_finished)
 
-    def show_session(self, detail: SessionDetail) -> None:
+    def show_session(self, detail: SessionDetail, *, focus_message_uuid: str = "") -> None:
         """Render the full session (header + filters + messages)."""
+        self._pending_detail = detail
+        self._pending_focus_message_uuid = focus_message_uuid
+        self._render_generation += 1
+        generation = self._render_generation
+        self._capture_filters_and_render(generation)
+
+    def _capture_filters_and_render(self, generation: int) -> None:
+        """Capture persisted filters from the current page before replacing HTML."""
+        script = (
+            "(function(){"
+            "try {"
+            "  if (!window.name) return null;"
+            "  var state = JSON.parse(window.name);"
+            "  if (!state || typeof state !== 'object') return null;"
+            "  var payload = state['cch_state_v1'];"
+            "  if (!payload || typeof payload !== 'object') return null;"
+            "  if (!Array.isArray(payload.active_filters)) return null;"
+            "  return payload.active_filters.slice();"
+            "} catch (_e) { return null; }"
+            "})()"
+        )
+
+        def _on_filters(raw: object) -> None:
+            global _PERSISTED_ACTIVE_FILTERS  # noqa: PLW0603
+            if generation != self._render_generation:
+                return
+            normalized = _normalize_filters(raw)
+            if normalized is not None:
+                _PERSISTED_ACTIVE_FILTERS = normalized
+            self._render_pending(generation)
+
+        self._webview.page().runJavaScript(script, _on_filters)
+
+    def _render_pending(self, generation: int) -> None:
+        """Render the latest pending session request."""
+        if generation != self._render_generation:
+            return
+        detail = self._pending_detail
+        if detail is None:
+            return
+        self._current_focus_message_uuid = self._pending_focus_message_uuid
+
         # Build header
         header_html = _build_session_header(detail)
 
         # Build filter chips
-        chips_html = _build_filter_chips()
+        active_filters = set(_PERSISTED_ACTIVE_FILTERS)
+        chips_html = _build_filter_chips(active_filters)
 
         # Build messages
         parts: list[str] = []
@@ -136,7 +213,7 @@ class MessageWebView(QWidget):
         body = "\n".join(parts) if parts else _empty_state()
 
         # Build initial filter state JS array
-        initial_filters = "[" + ", ".join(f"'{n}'" for n in _ALL_FILTER_NAMES) + "]"
+        initial_filters = _filters_js_array(_PERSISTED_ACTIVE_FILTERS)
 
         # Assemble the page
         template = _get_template()
@@ -147,6 +224,22 @@ class MessageWebView(QWidget):
             .replace("{initial_filters}", initial_filters)
         )
         self._webview.setHtml(document)
+
+    def _on_load_finished(self, ok: bool) -> None:
+        """Apply pending message focus after the page is loaded."""
+        if not ok or not self._current_focus_message_uuid:
+            return
+        target = self._current_focus_message_uuid
+        self._current_focus_message_uuid = ""
+        script = (
+            f"(function(target){{"
+            "if (!target) return;"
+            "if (typeof focusMessageByUuid === 'function') {{"
+            "  focusMessageByUuid(target);"
+            "}}"
+            f"}})({repr(target)})"
+        )
+        self._webview.page().runJavaScript(script)
 
     def scroll_to_top(self) -> None:
         """Scroll to the top of the conversation."""

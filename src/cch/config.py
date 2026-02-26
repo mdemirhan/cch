@@ -9,6 +9,8 @@ class Config:
     """Application configuration."""
 
     claude_dir: Path = field(default_factory=lambda: Path.home() / ".claude")
+    codex_dir: Path = field(default_factory=lambda: Path.home() / ".codex")
+    gemini_dir: Path = field(default_factory=lambda: Path.home() / ".gemini")
     cache_dir: Path = field(default_factory=lambda: Path.home() / ".cache" / "cch")
 
     @property
@@ -16,9 +18,13 @@ class Config:
         return self.claude_dir / "projects"
 
     @property
-    def db_path(self) -> Path:
-        return self.cache_dir / "index.db"
+    def codex_sessions_dir(self) -> Path:
+        return self.codex_dir / "sessions"
 
     @property
-    def stats_cache_path(self) -> Path:
-        return self.claude_dir / "stats-cache.json"
+    def gemini_tmp_dir(self) -> Path:
+        return self.gemini_dir / "tmp"
+
+    @property
+    def db_path(self) -> Path:
+        return self.cache_dir / "index.db"

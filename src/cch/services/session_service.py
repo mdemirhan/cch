@@ -67,7 +67,7 @@ class SessionService:
         # Fetch page
         params_page: list[str | int] = [*params, limit, offset]
         rows = await self._db.fetch_all(
-            f"""SELECT s.*, p.project_name
+            f"""SELECT s.*, p.project_name, COALESCE(s.provider, p.provider, 'claude') as provider
                 FROM sessions s
                 LEFT JOIN projects p ON p.project_id = s.project_id
                 {where}
@@ -79,14 +79,20 @@ class SessionService:
         sessions = [_row_to_summary(row) for row in rows]
         return Ok((sessions, total))
 
-    async def get_session_detail(self, session_id: str) -> Result[SessionDetail, str]:
+    async def get_session_detail(
+        self,
+        session_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> Result[SessionDetail, str]:
         """Get full session detail with messages.
 
         Returns:
             Ok with SessionDetail or Err if not found.
         """
         row = await self._db.fetch_one(
-            """SELECT s.*, p.project_name
+            """SELECT s.*, p.project_name, COALESCE(s.provider, p.provider, 'claude') as provider
                FROM sessions s
                LEFT JOIN projects p ON p.project_id = s.project_id
                WHERE s.session_id = ?""",
@@ -95,17 +101,37 @@ class SessionService:
         if row is None:
             return Err(f"Session {session_id} not found")
 
-        # Fetch messages
-        msg_rows = await self._db.fetch_all(
-            """SELECT * FROM messages WHERE session_id = ? ORDER BY sequence_num""",
-            (session_id,),
-        )
+        normalized_offset = max(offset, 0)
+        normalized_limit: int | None = None
+        if limit is not None:
+            normalized_limit = max(limit, 1)
 
-        # Fetch tool calls keyed by message UUID
-        tc_rows = await self._db.fetch_all(
-            """SELECT * FROM tool_calls WHERE session_id = ? ORDER BY timestamp""",
-            (session_id,),
-        )
+        # Fetch only the requested message window (or everything if no limit provided).
+        if normalized_limit is None:
+            msg_rows = await self._db.fetch_all(
+                """SELECT * FROM messages WHERE session_id = ? ORDER BY sequence_num""",
+                (session_id,),
+            )
+        else:
+            msg_rows = await self._db.fetch_all(
+                """SELECT * FROM messages
+                   WHERE session_id = ?
+                   ORDER BY sequence_num
+                   LIMIT ? OFFSET ?""",
+                (session_id, normalized_limit, normalized_offset),
+            )
+
+        # Fetch only tool calls for the visible messages.
+        tc_rows = []
+        if msg_rows:
+            uuids = [str(m["uuid"]) for m in msg_rows]
+            placeholders = ",".join("?" for _ in uuids)
+            tc_rows = await self._db.fetch_all(
+                f"""SELECT * FROM tool_calls
+                    WHERE session_id = ? AND message_uuid IN ({placeholders})
+                    ORDER BY timestamp""",
+                (session_id, *uuids),
+            )
         tc_by_msg: dict[str, list[ToolCallView]] = {}
         for tc in tc_rows:
             msg_uuid = tc["message_uuid"]
@@ -143,6 +169,7 @@ class SessionService:
         return Ok(
             SessionDetail(
                 session_id=row["session_id"],
+                provider=row["provider"] or "claude",
                 project_id=row["project_id"] or "",
                 project_name=row["project_name"] or "",
                 first_prompt=row["first_prompt"] or "",
@@ -170,7 +197,7 @@ class SessionService:
     async def get_recent_sessions(self, limit: int = 10) -> Result[list[SessionSummary], str]:
         """Get most recently modified sessions."""
         rows = await self._db.fetch_all(
-            """SELECT s.*, p.project_name
+            """SELECT s.*, p.project_name, COALESCE(s.provider, p.provider, 'claude') as provider
                FROM sessions s
                LEFT JOIN projects p ON p.project_id = s.project_id
                ORDER BY s.modified_at DESC LIMIT ?""",
@@ -233,6 +260,8 @@ def _row_to_summary(row: object) -> SessionSummary:
 
     return SessionSummary(
         session_id=_s("session_id"),
+        provider=_s("provider") or "claude",
+        file_path=_s("file_path"),
         project_id=_s("project_id"),
         project_name=_s("project_name"),
         first_prompt=_s("first_prompt"),

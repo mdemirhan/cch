@@ -48,6 +48,8 @@ def test_config(tmp_claude_dir: Path, tmp_path: Path) -> Config:
     """Config pointing at temporary test data."""
     return Config(
         claude_dir=tmp_claude_dir,
+        codex_dir=tmp_path / ".codex",
+        gemini_dir=tmp_path / ".gemini",
         cache_dir=tmp_path / "cache",
     )
 

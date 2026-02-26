@@ -10,6 +10,9 @@ COLORS = {
     "primary": "#E67E22",
     "primary_light": "#FFF3E0",
     "success": "#27AE60",
+    "provider_claude": "#E67E22",
+    "provider_codex": "#2D7FF9",
+    "provider_gemini": "#16A085",
     "bg": "#FFFFFF",
     "sidebar_bg": "#F0F0F0",
     "panel_bg": "#FAFAFA",
@@ -215,6 +218,30 @@ QDialog {{
 # ── Format helpers ──
 
 
+def _parse_iso_datetime(iso_str: str) -> datetime | None:
+    """Parse common ISO datetime formats and normalize to UTC."""
+    value = iso_str.strip()
+    if not value:
+        return None
+
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    if " " in value and "T" not in value:
+        value = value.replace(" ", "T")
+
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        try:
+            dt = datetime.fromisoformat(value[:19])
+        except ValueError:
+            return None
+
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
 def format_datetime(iso_str: str) -> str:
     """Format an ISO datetime string into a human-friendly display.
 
@@ -222,13 +249,11 @@ def format_datetime(iso_str: str) -> str:
     """
     if not iso_str:
         return ""
-    try:
-        cleaned = iso_str.replace("T", " ")[:19]
-        dt = datetime.strptime(cleaned, "%Y-%m-%d %H:%M:%S")
-    except (ValueError, IndexError):
+    dt = _parse_iso_datetime(iso_str)
+    if dt is None:
         return iso_str[:19] if len(iso_str) >= 19 else iso_str
 
-    now = datetime.now(tz=UTC).replace(tzinfo=None)
+    now = datetime.now(tz=UTC)
     today = now.date()
     dt_date = dt.date()
     time_part = dt.strftime("%H:%M")
@@ -249,15 +274,15 @@ def format_relative_time(iso_str: str) -> str:
     """Format an ISO datetime as relative time (e.g. '2h ago', '3d ago')."""
     if not iso_str:
         return ""
-    try:
-        cleaned = iso_str.replace("T", " ")[:19]
-        dt = datetime.strptime(cleaned, "%Y-%m-%d %H:%M:%S")
-    except (ValueError, IndexError):
+    dt = _parse_iso_datetime(iso_str)
+    if dt is None:
         return iso_str[:19] if len(iso_str) >= 19 else iso_str
 
-    now = datetime.now(tz=UTC).replace(tzinfo=None)
+    now = datetime.now(tz=UTC)
     delta = now - dt
     seconds = int(delta.total_seconds())
+    if seconds <= 0:
+        return "just now"
 
     if seconds < 60:
         return "just now"
@@ -313,3 +338,27 @@ def format_cost(amount: float) -> str:
     if amount < 0.01:
         return f"${amount:.4f}"
     return f"${amount:.2f}"
+
+
+def provider_label(provider: str) -> str:
+    """Map provider ID to display label."""
+    normalized = provider.strip().lower()
+    match normalized:
+        case "codex":
+            return "Codex"
+        case "gemini":
+            return "Gemini"
+        case _:
+            return "Claude"
+
+
+def provider_color(provider: str) -> str:
+    """Map provider ID to provider color."""
+    normalized = provider.strip().lower()
+    match normalized:
+        case "codex":
+            return COLORS["provider_codex"]
+        case "gemini":
+            return COLORS["provider_gemini"]
+        case _:
+            return COLORS["provider_claude"]

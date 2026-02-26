@@ -9,7 +9,6 @@ from cch.data.db import Database
 from cch.data.indexer import Indexer
 from cch.data.search import SearchEngine
 from cch.services.analytics_service import AnalyticsService
-from cch.services.export_service import ExportService
 from cch.services.project_service import ProjectService
 from cch.services.search_service import SearchService
 from cch.services.session_service import SessionService
@@ -28,7 +27,6 @@ class ServiceContainer:
     project_service: ProjectService
     analytics_service: AnalyticsService
     search_service: SearchService
-    export_service: ExportService
 
     @classmethod
     async def create(cls, config: Config) -> ServiceContainer:
@@ -43,7 +41,6 @@ class ServiceContainer:
         project_service = ProjectService(db)
         analytics_service = AnalyticsService(db)
         search_service = SearchService(search_engine)
-        export_service = ExportService(session_service)
 
         return cls(
             db=db,
@@ -52,7 +49,6 @@ class ServiceContainer:
             project_service=project_service,
             analytics_service=analytics_service,
             search_service=search_service,
-            export_service=export_service,
         )
 
     async def close(self) -> None:

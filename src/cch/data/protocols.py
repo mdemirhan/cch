@@ -23,6 +23,7 @@ class IndexerProtocol(Protocol):
     async def index_all(
         self,
         progress_callback: ProgressCallback | None = None,
+        force: bool = False,
     ) -> IndexResult: ...
 
     async def needs_reindex(self, file_path: str, mtime_ms: int, size: int) -> bool: ...

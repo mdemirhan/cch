@@ -9,6 +9,8 @@ class SessionSummary(BaseModel):
     """Summary of a session for list views."""
 
     session_id: str
+    provider: str = "claude"
+    file_path: str = ""
     project_id: str = ""
     project_name: str = ""
     first_prompt: str = ""
@@ -63,6 +65,7 @@ class SessionDetail(BaseModel):
     """Full session detail including messages."""
 
     session_id: str
+    provider: str = "claude"
     project_id: str = ""
     project_name: str = ""
     first_prompt: str = ""

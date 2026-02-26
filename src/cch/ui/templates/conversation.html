@@ -18,6 +18,14 @@ body {
     overflow-wrap: break-word;
 }
 
+body.preinit .messages-container {
+    visibility: hidden;
+}
+
+body.preinit .message {
+    transition: none !important;
+}
+
 /* ── Session header ── */
 .session-header {
     background-color: #FAFAFA;
@@ -128,6 +136,53 @@ body {
     opacity: 1;
 }
 
+.toolbar-footer {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.pagination-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.page-btn {
+    border: 1px solid #D9DDE1;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    color: #4F5961;
+    background-color: #FFFFFF;
+    cursor: pointer;
+}
+
+.page-btn:hover {
+    background-color: #F5F7F9;
+}
+
+.page-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.page-status {
+    font-size: 11px;
+    color: #8A949B;
+}
+
+.pagination-footer {
+    margin: 4px 0 14px 0;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
 /* ── Messages container ── */
 .messages-container {
     padding: 12px 16px;
@@ -188,6 +243,14 @@ body {
 
 .message.search-hidden {
     display: none;
+}
+
+.message.page-hidden {
+    display: none;
+}
+
+.message.focus-target {
+    box-shadow: 0 0 0 2px rgba(230, 126, 34, 0.35), 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
 /* ── Message header ── */
@@ -476,7 +539,7 @@ mark.search-hl {
 }
 </style>
 </head>
-<body>
+<body class="preinit">
 
 {session_header}
 
@@ -485,24 +548,120 @@ mark.search-hl {
     <div class="filter-chips">
         {filter_chips}
     </div>
+    <div class="toolbar-footer">
+        <div class="pagination-controls">
+            <button id="page-prev" class="page-btn" onclick="goToPrevPage()">Previous</button>
+            <button id="page-next" class="page-btn" onclick="goToNextPage()">Next</button>
+        </div>
+        <span id="page-status" class="page-status"></span>
+    </div>
 </div>
 
 <div class="messages-container">
     {message_body}
 </div>
 
+<div class="pagination-footer">
+    <div class="pagination-controls">
+        <button id="page-prev-bottom" class="page-btn" onclick="goToPrevPage()">Previous</button>
+        <button id="page-next-bottom" class="page-btn" onclick="goToNextPage()">Next</button>
+    </div>
+    <span id="page-status-bottom" class="page-status"></span>
+</div>
+
 <script>
 /* ── Filter state ── */
 var _activeFilters = {initial_filters};
+var _FILTERS_STORAGE_KEY = 'cch_active_filters';
+var _WINDOW_STATE_KEY = 'cch_state_v1';
 
-function toggleFilter(name) {
-    var idx = _activeFilters.indexOf(name);
-    if (idx !== -1) {
-        _activeFilters.splice(idx, 1);
-    } else {
-        _activeFilters.push(name);
+function _allFilterNames() {
+    var chips = document.querySelectorAll('.filter-chip[data-filter]');
+    var names = [];
+    for (var i = 0; i < chips.length; i++) {
+        names.push(chips[i].getAttribute('data-filter'));
     }
-    /* Update chip visual */
+    return names;
+}
+
+function _persistFilters() {
+    var allNames = _allFilterNames();
+    var allSet = {};
+    for (var i = 0; i < allNames.length; i++) {
+        allSet[allNames[i]] = true;
+    }
+    var sanitized = [];
+    for (var i = 0; i < _activeFilters.length; i++) {
+        var filterName = _activeFilters[i];
+        if (typeof filterName === 'string' && allSet[filterName]) {
+            sanitized.push(filterName);
+        }
+    }
+    _activeFilters = sanitized;
+
+    try {
+        var state = {};
+        if (window.name) {
+            state = JSON.parse(window.name);
+        }
+        if (!state || typeof state !== 'object') {
+            state = {};
+        }
+        state[_WINDOW_STATE_KEY] = { active_filters: sanitized };
+        window.name = JSON.stringify(state);
+    } catch (_e) {}
+
+    try {
+        sessionStorage.setItem(_FILTERS_STORAGE_KEY, JSON.stringify(sanitized));
+    } catch (_e) {}
+}
+
+function _restorePersistedFilters() {
+    var allowed = _allFilterNames();
+    var allowedSet = {};
+    for (var i = 0; i < allowed.length; i++) {
+        allowedSet[allowed[i]] = true;
+    }
+    function _sanitize(listLike) {
+        if (!Array.isArray(listLike)) return null;
+        var restored = [];
+        for (var i = 0; i < listLike.length; i++) {
+            var f = listLike[i];
+            if (typeof f === 'string' && allowedSet[f]) {
+                restored.push(f);
+            }
+        }
+        return restored;
+    }
+
+    try {
+        if (window.name) {
+            var state = JSON.parse(window.name);
+            if (state && typeof state === 'object') {
+                var payload = state[_WINDOW_STATE_KEY];
+                if (payload && typeof payload === 'object') {
+                    var fromWindowName = _sanitize(payload.active_filters);
+                    if (fromWindowName !== null) {
+                        _activeFilters = fromWindowName;
+                        return;
+                    }
+                }
+            }
+        }
+    } catch (_e) {}
+
+    try {
+        var raw = sessionStorage.getItem(_FILTERS_STORAGE_KEY);
+        if (!raw) return;
+        var parsed = JSON.parse(raw);
+        var fromSessionStorage = _sanitize(parsed);
+        if (fromSessionStorage !== null) {
+            _activeFilters = fromSessionStorage;
+        }
+    } catch (_e) {}
+}
+
+function syncFilterChips() {
     var chips = document.querySelectorAll('.filter-chip');
     for (var i = 0; i < chips.length; i++) {
         var chip = chips[i];
@@ -513,80 +672,271 @@ function toggleFilter(name) {
             chip.classList.add('inactive');
         }
     }
-    applyFilters();
 }
 
-function applyFilters() {
+var _PAGE_SIZE = 100;
+var _currentPage = 0;
+var _visibleMessages = [];
+var _searchQuery = "";
+
+function toggleFilter(name) {
+    var idx = _activeFilters.indexOf(name);
+    if (idx !== -1) {
+        _activeFilters.splice(idx, 1);
+    } else {
+        _activeFilters.push(name);
+    }
+    syncFilterChips();
+    _persistFilters();
+    applyFilters(true);
+}
+
+function applyFilters(resetPage) {
+    _searchToken += 1;
+    _applySearchAndFilters(resetPage !== false, _searchToken);
+}
+
+function _applySearchAndFilters(resetPage, token) {
+    if (token !== _searchToken) return;
+    clearTimeout(_highlightTimer);
+    _clearHighlights();
+
+    var input = document.querySelector('.search-input');
+    var rawQuery = input ? input.value : "";
+    _searchQuery = (rawQuery || "").trim().toLowerCase();
+
     var messages = document.querySelectorAll('.message[data-categories]');
+    var matched = [];
     for (var i = 0; i < messages.length; i++) {
         var msg = messages[i];
-        var cats = msg.getAttribute('data-categories').split(',');
-        var visible = false;
-        for (var j = 0; j < cats.length; j++) {
-            if (_activeFilters.indexOf(cats[j]) !== -1) {
-                visible = true;
-                break;
+        var filterMatch = _matchesFilters(msg);
+        msg.classList.toggle('hidden', !filterMatch);
+
+        var searchMatch = false;
+        if (filterMatch) {
+            if (!_searchQuery) {
+                searchMatch = true;
+            } else {
+                searchMatch = _messageSearchText(msg).indexOf(_searchQuery) !== -1;
             }
         }
-        if (visible) {
-            msg.classList.remove('hidden');
-        } else {
-            msg.classList.add('hidden');
+
+        msg.classList.toggle('search-hidden', !searchMatch);
+        if (searchMatch) {
+            matched.push(msg);
         }
     }
+
+    _visibleMessages = matched;
+    if (resetPage) {
+        _currentPage = 0;
+    }
+    _renderPage(token);
+}
+
+function _matchesFilters(msg) {
+    var cats = msg.getAttribute('data-categories');
+    if (!cats) return false;
+    var parts = cats.split(',');
+    for (var i = 0; i < parts.length; i++) {
+        if (_activeFilters.indexOf(parts[i]) !== -1) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /* ── Search ── */
 var _searchDebounce = null;
+var _searchToken = 0;
+var _highlightTimer = null;
 
 function onSearchInput(query) {
     clearTimeout(_searchDebounce);
-    _searchDebounce = setTimeout(function() { _doSearch(query); }, 150);
+    _searchDebounce = setTimeout(function() {
+        _searchToken += 1;
+        _searchQuery = (query || "").trim().toLowerCase();
+        _applySearchAndFilters(true, _searchToken);
+    }, 260);
 }
 
-function _doSearch(query) {
-    var q = query.trim();
-    var messages = document.querySelectorAll('.message[data-categories]');
+function _renderPage(token) {
+    if (token !== _searchToken) return;
 
-    /* Clear previous highlights */
+    clearTimeout(_highlightTimer);
+    _clearHighlights();
+
+    var total = _visibleMessages.length;
+    var totalPages = Math.max(1, Math.ceil(total / _PAGE_SIZE));
+    if (_currentPage >= totalPages) {
+        _currentPage = totalPages - 1;
+    }
+
+    var start = _currentPage * _PAGE_SIZE;
+    var end = Math.min(start + _PAGE_SIZE, total);
+    var pageMatches = [];
+    for (var i = 0; i < _visibleMessages.length; i++) {
+        var msg = _visibleMessages[i];
+        var inPage = i >= start && i < end;
+        msg.classList.toggle('page-hidden', !inPage);
+        if (inPage) {
+            pageMatches.push(msg);
+        }
+    }
+
+    _updatePaginationUi(total, totalPages, start, end);
+    if (_searchQuery && pageMatches.length) {
+        _scheduleHighlights(pageMatches, _searchQuery, token);
+    }
+}
+
+function _updatePaginationUi(total, totalPages, start, end) {
+    var prev = document.getElementById('page-prev');
+    var next = document.getElementById('page-next');
+    var status = document.getElementById('page-status');
+    var prevBottom = document.getElementById('page-prev-bottom');
+    var nextBottom = document.getElementById('page-next-bottom');
+    var statusBottom = document.getElementById('page-status-bottom');
+    if (!prev || !next || !status || !prevBottom || !nextBottom || !statusBottom) return;
+
+    var atStart = _currentPage <= 0;
+    var atEnd = _currentPage + 1 >= totalPages;
+    prev.disabled = atStart;
+    next.disabled = atEnd;
+    prevBottom.disabled = atStart;
+    nextBottom.disabled = atEnd;
+
+    if (!total) {
+        status.textContent = "No matching messages";
+        statusBottom.textContent = "No matching messages";
+        return;
+    }
+
+    var text =
+        "Showing " + (start + 1) + "-" + end + " of " + total +
+        " · Page " + (_currentPage + 1) + "/" + totalPages;
+    status.textContent = text;
+    statusBottom.textContent = text;
+}
+
+function goToPrevPage() {
+    if (_currentPage <= 0) return;
+    _currentPage -= 1;
+    _searchToken += 1;
+    _renderPage(_searchToken);
+}
+
+function goToNextPage() {
+    var totalPages = Math.max(1, Math.ceil(_visibleMessages.length / _PAGE_SIZE));
+    if (_currentPage + 1 >= totalPages) return;
+    _currentPage += 1;
+    _searchToken += 1;
+    _renderPage(_searchToken);
+}
+
+function focusMessageByUuid(messageUuid) {
+    if (!messageUuid) return;
+
+    var all = document.querySelectorAll('.message[data-message-uuid]');
+    var target = null;
+    for (var i = 0; i < all.length; i++) {
+        if (all[i].getAttribute('data-message-uuid') === messageUuid) {
+            target = all[i];
+            break;
+        }
+    }
+    if (!target) return;
+
+    var cats = target.getAttribute('data-categories');
+    if (cats) {
+        var parts = cats.split(',');
+        for (var j = 0; j < parts.length; j++) {
+            if (_activeFilters.indexOf(parts[j]) === -1) {
+                _activeFilters.push(parts[j]);
+            }
+        }
+        syncFilterChips();
+        _persistFilters();
+    }
+
+    var searchInput = document.querySelector('.search-input');
+    if (searchInput) {
+        searchInput.value = '';
+    }
+    _searchQuery = "";
+    _searchToken += 1;
+    _applySearchAndFilters(false, _searchToken);
+
+    var idx = -1;
+    for (var k = 0; k < _visibleMessages.length; k++) {
+        if (_visibleMessages[k].getAttribute('data-message-uuid') === messageUuid) {
+            idx = k;
+            break;
+        }
+    }
+    if (idx >= 0) {
+        _currentPage = Math.floor(idx / _PAGE_SIZE);
+        _searchToken += 1;
+        _renderPage(_searchToken);
+    }
+
+    requestAnimationFrame(function() {
+        target.classList.add('focus-target');
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(function() {
+            target.classList.remove('focus-target');
+        }, 1800);
+    });
+}
+
+function _messageSearchText(msg) {
+    var cached = msg.getAttribute('data-search-text');
+    if (cached !== null) return cached;
+    var text = (msg.textContent || '').toLowerCase();
+    msg.setAttribute('data-search-text', text);
+    return text;
+}
+
+function _clearHighlights() {
     var marks = document.querySelectorAll('mark.search-hl');
     for (var i = marks.length - 1; i >= 0; i--) {
         var m = marks[i];
         var parent = m.parentNode;
+        if (!parent) continue;
         parent.replaceChild(document.createTextNode(m.textContent), m);
         parent.normalize();
     }
-
-    if (!q) {
-        for (var i = 0; i < messages.length; i++) {
-            messages[i].classList.remove('search-hidden');
-        }
-        return;
-    }
-
-    var qLower = q.toLowerCase();
-
-    for (var i = 0; i < messages.length; i++) {
-        var msg = messages[i];
-        var text = msg.textContent || '';
-        if (text.toLowerCase().indexOf(qLower) !== -1) {
-            msg.classList.remove('search-hidden');
-            _highlightIn(msg, q);
-        } else {
-            msg.classList.add('search-hidden');
-        }
-    }
 }
 
-function _highlightIn(root, query) {
+function _scheduleHighlights(matches, query, token) {
+    if (!matches.length) return;
+    var queryLen = query.length;
+    var idx = 0;
+
+    function runChunk() {
+        if (token !== _searchToken) return;
+        var deadline = Date.now() + 12;
+        while (idx < matches.length && Date.now() < deadline) {
+            _highlightIn(matches[idx], query, queryLen);
+            idx += 1;
+        }
+        if (idx < matches.length) {
+            _highlightTimer = setTimeout(runChunk, 0);
+        }
+    }
+
+    _highlightTimer = setTimeout(runChunk, 0);
+}
+
+function _highlightIn(root, query, queryLen) {
     var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
     var qLower = query.toLowerCase();
-    var qLen = query.length;
     var nodes = [];
     while (walker.nextNode()) nodes.push(walker.currentNode);
 
     for (var i = 0; i < nodes.length; i++) {
         var node = nodes[i];
+        if (!node.parentNode) continue;
         /* Skip nodes inside script, style, or already highlighted */
         var tag = node.parentNode.tagName;
         if (tag === 'SCRIPT' || tag === 'STYLE') continue;
@@ -603,9 +953,9 @@ function _highlightIn(root, query) {
             }
             var mark = document.createElement('mark');
             mark.className = 'search-hl';
-            mark.textContent = text.substring(idx, idx + qLen);
+            mark.textContent = text.substring(idx, idx + queryLen);
             frag.appendChild(mark);
-            lastIdx = idx + qLen;
+            lastIdx = idx + queryLen;
             idx = text.toLowerCase().indexOf(qLower, lastIdx);
         }
         if (lastIdx < text.length) {
@@ -670,6 +1020,15 @@ function scrollToTop() {
 function scrollToBottom() {
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 }
+
+/* ── Initial render state ── */
+_restorePersistedFilters();
+syncFilterChips();
+applyFilters(true);
+_persistFilters();
+requestAnimationFrame(function() {
+    document.body.classList.remove('preinit');
+});
 </script>
 </body>
 </html>

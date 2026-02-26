@@ -43,7 +43,11 @@ class TestDiscoverProjects:
         assert any(p.project_id == "-tmp-test-project" for p in projects)
 
     def test_missing_dir(self, tmp_path: Path) -> None:
-        config = Config(claude_dir=tmp_path / "nonexistent")
+        config = Config(
+            claude_dir=tmp_path / "nonexistent",
+            codex_dir=tmp_path / "nonexistent_codex",
+            gemini_dir=tmp_path / "nonexistent_gemini",
+        )
         projects = discover_projects(config)
         assert projects == []
 
@@ -54,6 +58,7 @@ class TestDiscoverSessions:
         assert len(sessions) >= 1
         session = sessions[0]
         assert session.session_id == "test-session-001"
+        assert session.provider == "claude"
         assert session.file_path.exists()
         assert session.mtime_ms > 0
         assert session.file_size > 0

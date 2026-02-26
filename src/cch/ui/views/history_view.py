@@ -21,7 +21,12 @@ class HistoryView(QWidget):
         self._webview = MessageWebView()
         layout.addWidget(self._webview)
 
-    def show_session(self, detail: SessionDetail) -> None:
+    def show_session(
+        self,
+        detail: SessionDetail,
+        *,
+        focus_message_uuid: str = "",
+    ) -> None:
         """Display a full session."""
-        self._webview.show_session(detail)
+        self._webview.show_session(detail, focus_message_uuid=focus_message_uuid)
         self._webview.scroll_to_top()

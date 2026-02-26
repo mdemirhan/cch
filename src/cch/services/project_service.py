@@ -25,6 +25,7 @@ class ProjectService:
             [
                 ProjectSummary(
                     project_id=row["project_id"],
+                    provider=row["provider"] or "claude",
                     project_path=row["project_path"] or "",
                     project_name=row["project_name"] or "",
                     session_count=row["session_count"] or 0,
@@ -45,6 +46,7 @@ class ProjectService:
         return Ok(
             ProjectSummary(
                 project_id=row["project_id"],
+                provider=row["provider"] or "claude",
                 project_path=row["project_path"] or "",
                 project_name=row["project_name"] or "",
                 session_count=row["session_count"] or 0,

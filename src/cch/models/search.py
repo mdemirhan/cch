@@ -11,6 +11,7 @@ class SearchResult(BaseModel):
     message_uuid: str
     session_id: str
     project_name: str = ""
+    provider: str = "claude"
     role: str = ""
     snippet: str = ""
     timestamp: str = ""

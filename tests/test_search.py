@@ -50,3 +50,9 @@ class TestSearchEngine:
         results = await engine.search("Python")
         if results.results:
             assert results.results[0].snippet != ""
+
+    @pytest.mark.asyncio
+    async def test_query_with_quote_char(self, indexed_db: Database) -> None:
+        engine = SearchEngine(indexed_db)
+        results = await engine.search('bug"')
+        assert results.total_count >= 0

@@ -17,10 +17,11 @@ def build_diff_html(old_string: str, new_string: str) -> str:
 
     lines_html: list[str] = []
     for line in diff:
-        escaped = escape(line.rstrip("\n"))
         if line.startswith("@@") or line.startswith("---") or line.startswith("+++"):
-            lines_html.append(f'<div style="{_HEADER_STYLE}">{escaped}</div>')
-        elif line.startswith("+"):
+            continue
+
+        escaped = escape(line.rstrip("\n"))
+        if line.startswith("+"):
             lines_html.append(f'<div style="{_ADDED_STYLE}">{escaped}</div>')
         elif line.startswith("-"):
             lines_html.append(f'<div style="{_REMOVED_STYLE}">{escaped}</div>')
@@ -47,7 +48,3 @@ _LINE_STYLE = "padding: 1px 12px; white-space: pre-wrap; word-break: break-all"
 _ADDED_STYLE = f"{_LINE_STYLE}; background-color: rgba(39,174,96,0.15); color: #1B7A3D"
 _REMOVED_STYLE = f"{_LINE_STYLE}; background-color: rgba(231,76,60,0.15); color: #C0392B"
 _CONTEXT_STYLE = f"{_LINE_STYLE}; color: {COLORS['text_muted']}"
-_HEADER_STYLE = (
-    f"padding: 2px 12px; white-space: pre-wrap; word-break: break-all; "
-    f"color: {COLORS['primary']}; font-weight: bold"
-)

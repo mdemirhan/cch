@@ -25,7 +25,13 @@ class SessionServiceProtocol(Protocol):
         sort_order: str = "desc",
     ) -> Result[tuple[list[SessionSummary], int], str]: ...
 
-    async def get_session_detail(self, session_id: str) -> Result[SessionDetail, str]: ...
+    async def get_session_detail(
+        self,
+        session_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> Result[SessionDetail, str]: ...
 
 
 class ProjectServiceProtocol(Protocol):
@@ -56,14 +62,7 @@ class SearchServiceProtocol(Protocol):
         query: str,
         roles: list[str] | None = None,
         project_id: str = "",
+        project_ids: list[str] | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> Result[SearchResults, str]: ...
-
-
-class ExportServiceProtocol(Protocol):
-    """Interface for export operations."""
-
-    async def export_session_markdown(self, session_id: str) -> Result[str, str]: ...
-
-    async def export_session_json(self, session_id: str) -> Result[str, str]: ...
