@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from result import Ok, Result
 
+from cch.data.repositories import AnalyticsRepository
 from cch.models.analytics import CostBreakdown, HeatmapData, ToolUsageEntry
 from cch.services.cost import estimate_cost
-
-if TYPE_CHECKING:
-    from cch.data.db import Database
 
 
 class AnalyticsService:
     """Service for analytics queries."""
 
-    def __init__(self, db: Database) -> None:
-        self._db = db
+    def __init__(self, repository: AnalyticsRepository) -> None:
+        self._repo = repository
 
     async def get_cost_breakdown(self, period: str = "daily") -> Result[list[CostBreakdown], str]:
         """Get cost breakdown by time period.
@@ -25,27 +21,7 @@ class AnalyticsService:
         Args:
             period: 'daily', 'weekly', or 'monthly'.
         """
-        match period:
-            case "weekly":
-                date_expr = "strftime('%Y-W%W', created_at)"
-            case "monthly":
-                date_expr = "strftime('%Y-%m', created_at)"
-            case _:
-                date_expr = "DATE(created_at)"
-
-        rows = await self._db.fetch_all(f"""
-            SELECT
-                {date_expr} as period_date,
-                model,
-                SUM(total_input_tokens) as input_tokens,
-                SUM(total_output_tokens) as output_tokens,
-                SUM(total_cache_read_tokens) as cache_read_tokens,
-                SUM(total_cache_creation_tokens) as cache_creation_tokens
-            FROM sessions
-            WHERE model != ''
-            GROUP BY period_date, model
-            ORDER BY period_date
-        """)
+        rows = await self._repo.get_cost_rows(period)
 
         result: list[CostBreakdown] = []
         for row in rows:
@@ -72,15 +48,7 @@ class AnalyticsService:
 
     async def get_tool_usage(self) -> Result[list[ToolUsageEntry], str]:
         """Get aggregate tool usage statistics."""
-        rows = await self._db.fetch_all("""
-            SELECT
-                tool_name,
-                COUNT(*) as call_count,
-                COUNT(DISTINCT session_id) as session_count
-            FROM tool_calls
-            GROUP BY tool_name
-            ORDER BY call_count DESC
-        """)
+        rows = await self._repo.get_tool_usage_rows()
         return Ok(
             [
                 ToolUsageEntry(
@@ -94,15 +62,7 @@ class AnalyticsService:
 
     async def get_heatmap_data(self) -> Result[HeatmapData, str]:
         """Get hour-of-day x day-of-week activity data."""
-        rows = await self._db.fetch_all("""
-            SELECT
-                CAST(strftime('%w', timestamp) AS INTEGER) as dow,
-                CAST(strftime('%H', timestamp) AS INTEGER) as hour,
-                COUNT(*) as count
-            FROM messages
-            WHERE timestamp != ''
-            GROUP BY dow, hour
-        """)
+        rows = await self._repo.get_heatmap_rows()
 
         # Initialize 7x24 grid
         values = [[0] * 24 for _ in range(7)]
@@ -118,14 +78,4 @@ class AnalyticsService:
 
     async def get_model_usage(self) -> Result[list[dict[str, object]], str]:
         """Get aggregate model usage statistics."""
-        rows = await self._db.fetch_all("""
-            SELECT
-                model,
-                COUNT(*) as session_count,
-                SUM(total_output_tokens) as total_output_tokens
-            FROM sessions
-            WHERE model != ''
-            GROUP BY model
-            ORDER BY session_count DESC
-        """)
-        return Ok([dict(row) for row in rows])
+        return Ok(await self._repo.get_model_usage_rows())

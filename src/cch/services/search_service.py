@@ -21,7 +21,7 @@ class SearchService:
     async def search(
         self,
         query: str,
-        roles: list[str] | None = None,
+        categories: list[str] | None = None,
         project_id: str = "",
         project_ids: list[str] | None = None,
         providers: list[str] | None = None,
@@ -35,7 +35,7 @@ class SearchService:
         try:
             results = await self._engine.search(
                 query=query,
-                roles=roles,
+                categories=categories,
                 project_id=project_id,
                 project_ids=project_ids,
                 providers=providers,

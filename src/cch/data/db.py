@@ -11,7 +11,7 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -46,8 +46,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TEXT NOT NULL,
     modified_at TEXT NOT NULL,
     duration_ms INTEGER,
-    is_sidechain INTEGER DEFAULT 0,
-    version TEXT
+    is_sidechain INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS messages (

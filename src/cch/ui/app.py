@@ -7,7 +7,7 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QByteArray, QSettings, Qt, QTimer
+from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,6 +27,7 @@ from cch.ui.panels.content_panel import ContentPanel
 from cch.ui.panels.detail_list_panel import DetailListPanel
 from cch.ui.panels.list_panel import ListPanel
 from cch.ui.panels.nav_sidebar import NavSidebar
+from cch.ui.session_focus import SessionFocusController
 from cch.ui.temp_cleanup import cleanup_stale_webview_temp_dirs
 from cch.ui.theme import build_stylesheet
 
@@ -89,26 +90,41 @@ class CCHMainWindow(QMainWindow):
         self.setStatusBar(self._status_bar)
         self._status_label = QLabel("Loading...")
         self._status_bar.addWidget(self._status_label)
+        self._status_context_label = QLabel("View: Projects")
+        self._status_bar.addPermanentWidget(self._status_context_label)
+        self._status_summary_text = "Loading..."
         self._shutdown_in_progress = False
         self._project_request_generation = 0
         self._session_request_generation = 0
+        self._selected_project_id = ""
+        self._selected_project_name = ""
+        self._active_session_id = ""
+        self._selected_session_title = ""
+        self._project_names_by_id: dict[str, str] = {}
+        self._refresh_in_progress = False
         self._current_nav = "history"
-        self._session_focus_mode = False
-        self._pre_focus_splitter_state: QByteArray | None = None
-        self._pre_focus_project_list_state = self._list_panel.capture_view_state()
-        self._pre_focus_session_list_state = self._detail_panel.capture_view_state()
+        self._focus_controller = SessionFocusController(
+            sidebar=self._sidebar,
+            splitter=self._splitter,
+            list_panel=self._list_panel,
+            detail_panel=self._detail_panel,
+            status_bar=self._status_bar,
+        )
         self._force_exit_timer = QTimer(self)
         self._force_exit_timer.setSingleShot(True)
         self._force_exit_timer.timeout.connect(lambda: os._exit(0))
 
         # ── Wire signals ──
         self._sidebar.nav_changed.connect(self._on_nav_changed)
+        self._sidebar.refresh_requested.connect(self._refresh_requested)
+        self._sidebar.force_refresh_requested.connect(self._force_refresh_requested)
         self._sidebar.pane_toggle_requested.connect(self._toggle_session_focus_mode)
         self._sidebar.keys_requested.connect(self._show_shortcuts_dialog)
         self._list_panel.project_selected.connect(self._on_project_selected)
         self._detail_panel.session_selected.connect(self._on_session_selected)
         self._content_panel.session_requested.connect(self._on_session_selected)
         self._sidebar.set_pane_collapsed(False)
+        self._update_status_context()
 
         # ── Keyboard shortcuts ──
         self._setup_shortcuts()
@@ -134,13 +150,18 @@ class CCHMainWindow(QMainWindow):
     def _on_nav_changed(self, name: str) -> None:
         """Handle sidebar navigation change."""
         self._current_nav = name
-        if self._session_focus_mode:
+        if self._focus_controller.active:
             if name != "history":
-                self._exit_session_focus_mode()
+                self._focus_controller.exit(
+                    current_nav=self._current_nav,
+                    apply_nav_visibility=self._apply_nav_visibility,
+                )
             else:
                 self._content_panel.show_history()
+                self._update_status_context()
                 return
         self._apply_nav_visibility(name)
+        self._update_status_context()
 
     def _apply_nav_visibility(self, name: str) -> None:
         """Update panel visibility and active content for the selected nav."""
@@ -161,41 +182,18 @@ class CCHMainWindow(QMainWindow):
 
     def _toggle_session_focus_mode(self) -> None:
         """Toggle session-detail focus mode for history view."""
-        if self._session_focus_mode:
-            self._exit_session_focus_mode()
-            return
-        self._enter_session_focus_mode()
-
-    def _enter_session_focus_mode(self) -> None:
-        """Hide side panels so session detail fills the available window."""
-        if self._session_focus_mode:
-            return
-        if self._current_nav != "history" or not self._content_panel.is_history_active():
-            return
-        self._pre_focus_splitter_state = self._splitter.saveState()
-        self._pre_focus_project_list_state = self._list_panel.capture_view_state()
-        self._pre_focus_session_list_state = self._detail_panel.capture_view_state()
-        self._session_focus_mode = True
-        self._sidebar.set_pane_collapsed(True)
-        self._splitter.setSizes([0, 0, max(1, self._splitter.width())])
-        self._status_bar.showMessage(
-            "Session focus mode enabled. Press Esc to restore.",
-            2500,
+        self._focus_controller.toggle(
+            current_nav=self._current_nav,
+            history_active=self._content_panel.is_history_active(),
+            apply_nav_visibility=self._apply_nav_visibility,
         )
 
     def _exit_session_focus_mode(self) -> None:
         """Restore pre-focus layout after session detail focus mode."""
-        if not self._session_focus_mode:
-            return
-        self._session_focus_mode = False
-        self._sidebar.set_pane_collapsed(False)
-        if self._pre_focus_splitter_state is not None:
-            self._splitter.restoreState(self._pre_focus_splitter_state)
-            self._pre_focus_splitter_state = None
-        self._apply_nav_visibility(self._current_nav)
-        self._list_panel.restore_view_state(self._pre_focus_project_list_state)
-        self._detail_panel.restore_view_state(self._pre_focus_session_list_state)
-        self._status_bar.showMessage("Session focus mode disabled.", 1500)
+        self._focus_controller.exit(
+            current_nav=self._current_nav,
+            apply_nav_visibility=self._apply_nav_visibility,
+        )
 
     def _zoom_in_session(self) -> None:
         """Increase session detail zoom when history view is active."""
@@ -240,6 +238,15 @@ class CCHMainWindow(QMainWindow):
     @async_slot
     async def _on_project_selected(self, project_id: str) -> None:
         """Load sessions for the selected project."""
+        self._selected_project_id = project_id
+        self._selected_project_name = self._project_names_by_id.get(project_id, "")
+        self._active_session_id = ""
+        self._selected_session_title = ""
+        self._update_status_context()
+        await self._load_project_sessions(project_id)
+
+    async def _load_project_sessions(self, project_id: str) -> None:
+        """Load sessions for one project into the sessions list panel."""
         if not self._services:
             return
         self._project_request_generation += 1
@@ -256,30 +263,96 @@ class CCHMainWindow(QMainWindow):
     @async_slot
     async def _on_session_selected(self, session_id: str, message_uuid: str = "") -> None:
         """Load full session detail and display in content panel."""
+        self._active_session_id = session_id
+        self._update_status_context()
+        await self._load_session_detail(session_id, message_uuid)
+
+    async def _load_session_detail(self, session_id: str, message_uuid: str = "") -> None:
+        """Load session detail and render it."""
         if not self._services:
             return
         self._session_request_generation += 1
         generation = self._session_request_generation
-        offset = 0
-        if message_uuid:
-            msg_offset = await self._services.session_service.get_message_offset(
-                session_id,
-                message_uuid,
-            )
-            if msg_offset is not None:
-                offset = max(0, msg_offset - 200)
         result = await self._services.session_service.get_session_detail(
             session_id,
-            limit=1200,
-            offset=offset,
+            limit=None,
         )
         if generation != self._session_request_generation:
             return
         if isinstance(result, Ok):
+            detail = result.ok_value
+            self._selected_project_id = detail.project_id or self._selected_project_id
+            if detail.project_name:
+                self._selected_project_name = detail.project_name
+            title = detail.summary or detail.first_prompt or detail.session_id[:12]
+            self._selected_session_title = " ".join(title.split())
+            self._update_status_context()
             self._content_panel.show_session(
-                result.ok_value,
+                detail,
                 focus_message_uuid=message_uuid,
             )
+
+    async def _run_indexing(self, *, force: bool = False, label: str = "Refreshing") -> None:
+        """Run indexing while updating status text with progress."""
+        if self._services is None:
+            return
+        self._status_label.setText(f"{label}: preparing...")
+        result = await self._services.indexer.index_all(
+            force=force,
+            progress_callback=lambda c, t, m: self._status_label.setText(
+                f"{label}: {c}/{t} {m}"
+            ),
+        )
+        logger.info("Indexing complete: %s", result)
+        self._status_bar.showMessage(
+            f"{label} complete: {result.files_indexed} indexed, "
+            f"{result.files_skipped} skipped, {result.files_failed} failed",
+            3500,
+        )
+
+    @async_slot
+    async def _refresh_requested(self) -> None:
+        """Perform an on-demand indexing refresh from the sidebar button."""
+        await self._refresh(force=False, label="Refresh")
+
+    @async_slot
+    async def _force_refresh_requested(self) -> None:
+        """Perform a full on-demand reindex from the sidebar button."""
+        await self._refresh(force=True, label="Force refresh")
+
+    async def _refresh(self, *, force: bool, label: str) -> None:
+        """Run refresh workflow while preserving project/session pane state."""
+        if self._shutdown_in_progress or self._services is None:
+            return
+        if self._refresh_in_progress:
+            return
+        self._refresh_in_progress = True
+        self._sidebar.set_refresh_busy(True)
+        prior_project_state = self._list_panel.capture_view_state()
+        prior_session_state = self._detail_panel.capture_view_state()
+        selected_project_id = self._selected_project_id or prior_project_state.selected_project_id
+        selected_session_id = self._active_session_id or prior_session_state.selected_session_id
+        try:
+            await self._run_indexing(force=force, label=label)
+            await self._load_projects()
+            self._list_panel.restore_view_state(prior_project_state)
+            if selected_project_id:
+                await self._load_project_sessions(selected_project_id)
+                self._detail_panel.restore_view_state(prior_session_state)
+            if (
+                selected_session_id
+                and self._current_nav == "history"
+                and self._content_panel.is_history_active()
+            ):
+                await self._load_session_detail(selected_session_id)
+        except Exception:
+            logger.exception("Refresh failed")
+            self._status_bar.showMessage("Refresh failed. Check terminal logs.", 4000)
+        finally:
+            self._refresh_in_progress = False
+            self._sidebar.set_refresh_busy(False)
+            self._status_label.setText(self._status_summary_text)
+            self._update_status_context()
 
     async def initialize(self) -> None:
         """Initialize services and load initial data."""
@@ -288,15 +361,11 @@ class CCHMainWindow(QMainWindow):
             self._services = await ServiceContainer.create(self._config)
 
             # Background indexing
-            logger.info("Starting background indexing...")
+            logger.info("Starting initial indexing...")
             force_reindex = bool(self._services.db.requires_full_reindex)
             if force_reindex:
                 logger.info("Detected old DB schema. Running full reindex.")
-            result = await self._services.indexer.index_all(
-                force=force_reindex,
-                progress_callback=lambda c, t, m: logger.info("[%d/%d] %s", c, t, m)
-            )
-            logger.info("Indexing complete: %s", result)
+            await self._run_indexing(force=force_reindex, label="Initial load")
 
             # Pass services to panels that need them
             self._content_panel.set_services(self._services)
@@ -315,10 +384,40 @@ class CCHMainWindow(QMainWindow):
         if isinstance(projects_result, Ok):
             projects = projects_result.ok_value
             self._list_panel.set_projects(projects)
+            self._project_names_by_id = {
+                project.project_id: project.project_name for project in projects
+            }
+            if (
+                self._selected_project_id
+                and self._selected_project_id not in self._project_names_by_id
+            ):
+                self._selected_project_id = ""
+                self._selected_project_name = ""
+                self._active_session_id = ""
+                self._selected_session_title = ""
 
             # Count sessions
             total_sessions = sum(p.session_count for p in projects)
-            self._status_label.setText(f"{len(projects)} projects  {total_sessions} sessions")
+            self._status_summary_text = f"{len(projects)} projects  {total_sessions} sessions"
+            self._status_label.setText(self._status_summary_text)
+            self._update_status_context()
+
+    def _update_status_context(self) -> None:
+        """Render current navigation + selection context in the status bar."""
+        nav_label = {
+            "history": "Projects",
+            "search": "Search",
+            "statistics": "Stats",
+        }.get(self._current_nav, self._current_nav.title())
+        parts = [f"View: {nav_label}"]
+        if self._selected_project_name:
+            parts.append(f"Project: {self._selected_project_name}")
+        if self._selected_session_title:
+            title = self._selected_session_title
+            if len(title) > 56:
+                title = f"{title[:53]}..."
+            parts.append(f"Session: {title}")
+        self._status_context_label.setText(" | ".join(parts))
 
     def _restore_state(self) -> None:
         """Restore window geometry and splitter positions from QSettings."""
@@ -336,7 +435,7 @@ class CCHMainWindow(QMainWindow):
         Attempt graceful shutdown first; force-exit as a fallback if
         QWebEngine/Qt teardown gets stuck.
         """
-        if self._session_focus_mode:
+        if self._focus_controller.active:
             self._exit_session_focus_mode()
 
         settings = QSettings("CCH", "ClaudeCodeHistory")

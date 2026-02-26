@@ -11,7 +11,6 @@ from cch.config import Config
 from cch.data.discovery import (
     _build_gemini_project_hash_map,
     _decode_project_id,
-    _encode_project_path,
     _load_sessions_index,
     _project_name_from_path,
     _provider_project_id,
@@ -51,7 +50,8 @@ class TestDiscoverProjects:
     def test_discovers_projects(self, test_config: Config) -> None:
         projects = discover_projects(test_config)
         assert len(projects) >= 1
-        assert any(p.project_id == "-tmp-test-project" for p in projects)
+        assert all(p.project_id.startswith(f"{p.provider}:") for p in projects)
+        assert any(p.project_path == "/Users/test/myproject" for p in projects)
 
     def test_missing_dir(self, tmp_path: Path) -> None:
         config = Config(
@@ -82,15 +82,13 @@ class TestDiscoverSessions:
 
 
 class TestDiscoveryHelpers:
-    def test_encode_project_path(self) -> None:
-        assert _encode_project_path("/Users/redacted/demo") == "-Users-redacted-demo"
-        assert _encode_project_path("Users/redacted/demo/") == "-Users-redacted-demo"
-        assert _encode_project_path("   ") == ""
-
     def test_provider_project_id(self) -> None:
-        assert _provider_project_id("claude", "/Users/a/demo") == "-Users-a-demo"
-        assert _provider_project_id("codex", "/Users/a/demo") == "codex:-Users-a-demo"
-        assert _provider_project_id("gemini", "", fallback="x") == "gemini:x"
+        claude_expected = hashlib.sha1(b"claude:/Users/a/demo").hexdigest()[:16]
+        codex_expected = hashlib.sha1(b"codex:/Users/a/demo").hexdigest()[:16]
+        gemini_expected = hashlib.sha1(b"gemini:x").hexdigest()[:16]
+        assert _provider_project_id("claude", "/Users/a/demo") == f"claude:{claude_expected}"
+        assert _provider_project_id("codex", "/Users/a/demo") == f"codex:{codex_expected}"
+        assert _provider_project_id("gemini", "", fallback="x") == f"gemini:{gemini_expected}"
 
     def test_provider_session_id(self, tmp_path: Path) -> None:
         assert _provider_session_id("claude", "abc") == "abc"

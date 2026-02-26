@@ -10,6 +10,7 @@ import pytest
 from result import Err, Ok
 
 from cch.config import Config
+from cch.data.repositories import AnalyticsRepository, ProjectRepository, SessionRepository
 from cch.services.analytics_service import AnalyticsService
 from cch.services.container import ServiceContainer
 from cch.services.project_service import ProjectService
@@ -66,7 +67,7 @@ async def test_analytics_service_period_variants() -> None:
             "cache_creation_tokens": 0,
         }
     ]
-    svc = AnalyticsService(db)  # type: ignore[arg-type]
+    svc = AnalyticsService(AnalyticsRepository(db))  # type: ignore[arg-type]
 
     weekly = await svc.get_cost_breakdown("weekly")
     assert isinstance(weekly, Ok)
@@ -89,7 +90,7 @@ async def test_analytics_service_heatmap_adjusts_sunday_index() -> None:
         {"dow": 1, "hour": 10, "count": 5},  # Monday -> index 0
         {"dow": 2, "hour": 25, "count": 9},  # invalid hour ignored
     ]
-    svc = AnalyticsService(db)  # type: ignore[arg-type]
+    svc = AnalyticsService(AnalyticsRepository(db))  # type: ignore[arg-type]
     result = await svc.get_heatmap_data()
     assert isinstance(result, Ok)
     heatmap = result.ok_value.values
@@ -100,7 +101,7 @@ async def test_analytics_service_heatmap_adjusts_sunday_index() -> None:
 @pytest.mark.asyncio
 async def test_project_service_found_and_not_found() -> None:
     db = FakeDB()
-    svc = ProjectService(db)  # type: ignore[arg-type]
+    svc = ProjectService(ProjectRepository(db))  # type: ignore[arg-type]
 
     db.fetch_all_result = [
         {
@@ -138,7 +139,7 @@ async def test_project_service_found_and_not_found() -> None:
 @pytest.mark.asyncio
 async def test_session_service_sort_fallback_and_offset_missing() -> None:
     db = FakeDB()
-    svc = SessionService(db)  # type: ignore[arg-type]
+    svc = SessionService(SessionRepository(db))  # type: ignore[arg-type]
 
     db.fetch_one_result = {"cnt": 0}
     db.fetch_all_result = []

@@ -85,16 +85,6 @@ class Indexer:
 
         return result
 
-    async def needs_reindex(self, file_path: str, mtime_ms: int, size: int) -> bool:
-        """Check if a session file needs re-indexing."""
-        row = await self._db.fetch_one(
-            "SELECT file_mtime_ms, file_size FROM indexed_files WHERE file_path = ?",
-            (file_path,),
-        )
-        if row is None:
-            return True
-        return row["file_mtime_ms"] != mtime_ms or row["file_size"] != size
-
     async def _load_indexed_files(self) -> dict[str, tuple[int, int]]:
         """Load indexed file metadata once for fast incremental checks."""
         rows = await self._db.fetch_all(
@@ -179,7 +169,7 @@ class Indexer:
                  total_cache_read_tokens, total_cache_creation_tokens,
                  model, models_used, git_branch, cwd,
                  created_at, modified_at, duration_ms, is_sidechain)
-                VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, '', '', ?, '', ?, ?, 0, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, '', '', ?, ?, ?, ?, 0, ?)""",
                 (
                     session.session_id,
                     session.project_id,
@@ -188,6 +178,7 @@ class Indexer:
                     first_prompt,
                     summary,
                     session.git_branch,
+                    session.project_path,
                     created_at,
                     modified_at,
                     1 if session.is_sidechain else 0,
@@ -303,7 +294,7 @@ class Indexer:
                        assistant_message_count = ?, tool_call_count = ?,
                        total_input_tokens = ?, total_output_tokens = ?,
                        total_cache_read_tokens = ?, total_cache_creation_tokens = ?,
-                       model = ?, models_used = ?, git_branch = ?,
+                       model = ?, models_used = ?, git_branch = ?, cwd = ?,
                        created_at = ?, modified_at = ?, duration_ms = ?, is_sidechain = ?
                    WHERE session_id = ?""",
                 (
@@ -320,6 +311,7 @@ class Indexer:
                     primary_model,
                     ",".join(sorted(models_used)),
                     session.git_branch,
+                    session.project_path,
                     created_at,
                     modified_at,
                     duration_ms,

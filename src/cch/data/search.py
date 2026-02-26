@@ -14,6 +14,13 @@ from cch.models.search import SearchResult, SearchResults
 if TYPE_CHECKING:
     from cch.data.db import Database
 
+_SEARCH_FROM_SQL = """
+FROM messages_fts f
+JOIN messages m ON m.id = f.rowid
+JOIN sessions s ON s.session_id = m.session_id
+LEFT JOIN projects p ON p.project_id = s.project_id
+"""
+
 
 class SearchEngine:
     """FTS5-based search over indexed messages."""
@@ -24,7 +31,7 @@ class SearchEngine:
     async def search(
         self,
         query: str,
-        roles: list[str] | None = None,
+        categories: list[str] | None = None,
         project_id: str = "",
         project_ids: list[str] | None = None,
         providers: list[str] | None = None,
@@ -36,9 +43,9 @@ class SearchEngine:
 
         Args:
             query: Full-text search query.
-            roles: Filter by categories. Valid values: "user", "assistant",
-                   "tool_use", "thinking", "tool_result", "system".
-                   None or empty means all.
+            categories: Filter by categories. Valid values: "user", "assistant",
+                        "tool_use", "thinking", "tool_result", "system".
+                        None or empty means all.
             project_id: Filter by project. Empty for all.
             providers: Optional provider filter values (claude/codex/gemini).
             project_query: Optional project name/path substring filter.
@@ -56,55 +63,45 @@ class SearchEngine:
         fts_query = _escape_fts_query(query)
 
         conditions, filter_params = _build_filter_conditions(
-            roles=roles,
+            categories=categories,
             project_id=project_id,
             project_ids=project_ids,
             providers=providers,
             project_query=project_query,
-            include_roles=True,
+            include_categories=True,
         )
         params: list[str | int] = [fts_query, *filter_params]
 
-        where_clause = ""
-        if conditions:
-            where_clause = "AND " + " AND ".join(conditions)
+        where_clause = _sql_filter_clause(conditions)
 
         # Count total results
-        count_sql = f"""
-            SELECT COUNT(*) as cnt
-            FROM messages_fts f
-            JOIN messages m ON m.id = f.rowid
-            JOIN sessions s ON s.session_id = m.session_id
-            LEFT JOIN projects p ON p.project_id = s.project_id
-            WHERE messages_fts MATCH ?
-            {where_clause}
-        """
+        count_sql = (
+            "SELECT COUNT(*) as cnt\n"
+            f"{_SEARCH_FROM_SQL}\n"
+            "WHERE messages_fts MATCH ?\n"
+            f"{where_clause}"
+        )
         count_row = await self._db.fetch_one(count_sql, tuple(params))
         total_count = count_row["cnt"] if count_row else 0
 
         # Build message-type counts using provider/project filters, but without
         # applying active type chips so users can see available result types.
         type_conditions, type_filter_params = _build_filter_conditions(
-            roles=roles,
+            categories=categories,
             project_id=project_id,
             project_ids=project_ids,
             providers=providers,
             project_query=project_query,
-            include_roles=False,
+            include_categories=False,
         )
-        type_where_clause = ""
-        if type_conditions:
-            type_where_clause = "AND " + " AND ".join(type_conditions)
-        type_counts_sql = f"""
-            SELECT m.type as message_type, COUNT(*) as cnt
-            FROM messages_fts f
-            JOIN messages m ON m.id = f.rowid
-            JOIN sessions s ON s.session_id = m.session_id
-            LEFT JOIN projects p ON p.project_id = s.project_id
-            WHERE messages_fts MATCH ?
-            {type_where_clause}
-            GROUP BY m.type
-        """
+        type_where_clause = _sql_filter_clause(type_conditions)
+        type_counts_sql = (
+            "SELECT m.type as message_type, COUNT(*) as cnt\n"
+            f"{_SEARCH_FROM_SQL}\n"
+            "WHERE messages_fts MATCH ?\n"
+            f"{type_where_clause}\n"
+            "GROUP BY m.type"
+        )
         type_rows = await self._db.fetch_all(
             type_counts_sql, tuple([fts_query, *type_filter_params])
         )
@@ -115,24 +112,21 @@ class SearchEngine:
 
         # Fetch results with snippets
         params_with_pagination = [*params, limit, offset]
-        results_sql = f"""
-            SELECT
-                m.uuid as message_uuid,
-                m.session_id,
-                m.type as message_type,
-                m.timestamp,
-                snippet(messages_fts, 0, '<mark>', '</mark>', '...', 64) as snippet,
-                p.project_name,
-                COALESCE(s.provider, p.provider, 'claude') as provider
-            FROM messages_fts f
-            JOIN messages m ON m.id = f.rowid
-            JOIN sessions s ON s.session_id = m.session_id
-            LEFT JOIN projects p ON p.project_id = s.project_id
-            WHERE messages_fts MATCH ?
-            {where_clause}
-            ORDER BY rank
-            LIMIT ? OFFSET ?
-        """
+        results_sql = (
+            "SELECT\n"
+            "    m.uuid as message_uuid,\n"
+            "    m.session_id,\n"
+            "    m.type as message_type,\n"
+            "    m.timestamp,\n"
+            "    snippet(messages_fts, 0, '<mark>', '</mark>', '...', 64) as snippet,\n"
+            "    p.project_name,\n"
+            "    s.provider as provider\n"
+            f"{_SEARCH_FROM_SQL}\n"
+            "WHERE messages_fts MATCH ?\n"
+            f"{where_clause}\n"
+            "ORDER BY rank\n"
+            "LIMIT ? OFFSET ?"
+        )
         rows = await self._db.fetch_all(results_sql, tuple(params_with_pagination))
 
         results = [
@@ -158,23 +152,23 @@ class SearchEngine:
 
 def _build_filter_conditions(
     *,
-    roles: list[str] | None,
+    categories: list[str] | None,
     project_id: str,
     project_ids: list[str] | None,
     providers: list[str] | None,
     project_query: str,
-    include_roles: bool,
+    include_categories: bool,
 ) -> tuple[list[str], list[str | int]]:
     """Build SQL filters and bind params for shared search queries."""
     conditions: list[str] = []
     params: list[str | int] = []
 
-    if include_roles and roles:
-        normalized_roles = normalize_category_keys(roles)
-        if normalized_roles:
-            placeholders = ",".join("?" for _ in normalized_roles)
+    if include_categories and categories:
+        normalized_categories = normalize_category_keys(categories)
+        if normalized_categories:
+            placeholders = ",".join("?" for _ in normalized_categories)
             conditions.append(f"m.type IN ({placeholders})")
-            params.extend(normalized_roles)
+            params.extend(normalized_categories)
 
     if project_ids:
         normalized_ids = [pid for pid in project_ids if pid]
@@ -196,7 +190,7 @@ def _build_filter_conditions(
         )
         if normalized_providers:
             placeholders = ",".join("?" for _ in normalized_providers)
-            conditions.append(f"COALESCE(s.provider, 'claude') IN ({placeholders})")
+            conditions.append(f"s.provider IN ({placeholders})")
             params.extend(normalized_providers)
 
     project_filter = project_query.strip().lower()
@@ -206,6 +200,12 @@ def _build_filter_conditions(
         params.extend([like_pattern, like_pattern])
 
     return conditions, params
+
+
+def _sql_filter_clause(conditions: list[str]) -> str:
+    if not conditions:
+        return ""
+    return "AND " + " AND ".join(conditions)
 
 
 def _escape_fts_query(query: str) -> str:

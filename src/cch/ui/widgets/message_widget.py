@@ -16,6 +16,12 @@ from cch.ui.widgets.tool_call_widget import render_tool_call_html
 _block_counter: int = 0
 
 
+def reset_block_counter() -> None:
+    """Reset internal render counter before each document render pass."""
+    global _block_counter  # noqa: PLW0603
+    _block_counter = 0
+
+
 def _next_block_id(prefix: str = "block") -> str:
     """Return a unique block ID for collapsible elements."""
     global _block_counter  # noqa: PLW0603
@@ -25,18 +31,15 @@ def _next_block_id(prefix: str = "block") -> str:
 
 def classify_message(
     msg: MessageView,
-    *,
-    content_blocks: list[dict[str, object]] | None = None,
 ) -> set[str]:
     """Return the set of content categories present in a message."""
-    _ = content_blocks
     return {normalize_message_type(msg.type)}
 
 
 def render_message_html(msg: MessageView) -> str:
     """Render a single message as an HTML fragment with data-categories."""
     content_blocks = _parse_content_json(msg.content_json)
-    categories = classify_message(msg, content_blocks=content_blocks)
+    categories = classify_message(msg)
     message_type = normalize_message_type(msg.type)
 
     if message_type == "system":

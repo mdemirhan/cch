@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from cch.data.db import Database
 from cch.data.indexer import Indexer
+from cch.data.repositories import AnalyticsRepository, ProjectRepository, SessionRepository
 from cch.data.search import SearchEngine
 from cch.services.analytics_service import AnalyticsService
 from cch.services.project_service import ProjectService
@@ -36,10 +37,13 @@ class ServiceContainer:
 
         indexer = Indexer(db, config)
         search_engine = SearchEngine(db)
+        session_repo = SessionRepository(db)
+        project_repo = ProjectRepository(db)
+        analytics_repo = AnalyticsRepository(db)
 
-        session_service = SessionService(db)
-        project_service = ProjectService(db)
-        analytics_service = AnalyticsService(db)
+        session_service = SessionService(session_repo)
+        project_service = ProjectService(project_repo)
+        analytics_service = AnalyticsService(analytics_repo)
         search_service = SearchService(search_engine)
 
         return cls(

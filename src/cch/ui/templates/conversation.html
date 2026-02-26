@@ -457,35 +457,6 @@ table { border-collapse: collapse; margin: 8px 0; width: 100%; table-layout: fix
 th, td { border: 1px solid #E0E0E0; padding: 6px 10px; word-wrap: break-word; overflow-wrap: break-word; }
 th { background-color: #FAFAFA; font-weight: 600; }
 
-/* ── Code container with copy button ── */
-.code-container {
-    position: relative;
-}
-
-.code-container .copy-btn {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    background-color: rgba(0,0,0,0.06);
-    border: 1px solid rgba(0,0,0,0.1);
-    border-radius: 4px;
-    padding: 3px 8px;
-    font-size: 11px;
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.2s ease;
-    color: #666;
-    font-family: -apple-system, sans-serif;
-}
-
-.code-container:hover .copy-btn {
-    opacity: 1;
-}
-
-.copy-btn:hover {
-    background-color: rgba(0,0,0,0.1);
-}
-
 /* ── Bash command styling ── */
 .bash-command {
     background-color: #1A1A1A;
@@ -983,38 +954,6 @@ function toggleCollapsible(id) {
             body.removeEventListener('transitionend', handler);
         });
     }
-}
-
-/* ── Copy code ── */
-function copyCode(btn) {
-    var container = btn.parentElement;
-    var codeEl = container.querySelector('code') || container.querySelector('pre');
-    if (!codeEl) return;
-    var text = codeEl.innerText || codeEl.textContent;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text);
-    } else {
-        var ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-    }
-    var orig = btn.textContent;
-    btn.textContent = 'Copied!';
-    setTimeout(function() { btn.textContent = orig; }, 1500);
-}
-
-/* ── Scroll helpers ── */
-function scrollToTop() {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-function scrollToBottom() {
-    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 }
 
 /* ── Initial render state ── */

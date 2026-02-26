@@ -8,6 +8,7 @@ from result import Err, Ok
 from cch.config import Config
 from cch.data.db import Database
 from cch.data.indexer import Indexer
+from cch.data.repositories import AnalyticsRepository, ProjectRepository, SessionRepository
 from cch.data.search import SearchEngine
 from cch.services.analytics_service import AnalyticsService
 from cch.services.cost import estimate_cost
@@ -27,7 +28,7 @@ async def indexed_db(in_memory_db: Database, test_config: Config) -> Database:
 class TestSessionService:
     @pytest.mark.asyncio
     async def test_list_sessions(self, indexed_db: Database) -> None:
-        svc = SessionService(indexed_db)
+        svc = SessionService(SessionRepository(indexed_db))
         result = await svc.list_sessions()
         assert isinstance(result, Ok)
         sessions, total = result.ok_value
@@ -37,7 +38,7 @@ class TestSessionService:
 
     @pytest.mark.asyncio
     async def test_get_session_detail(self, indexed_db: Database) -> None:
-        svc = SessionService(indexed_db)
+        svc = SessionService(SessionRepository(indexed_db))
         result = await svc.get_session_detail("test-session-001")
         assert isinstance(result, Ok)
         detail = result.ok_value
@@ -46,7 +47,7 @@ class TestSessionService:
 
     @pytest.mark.asyncio
     async def test_get_session_detail_paged(self, indexed_db: Database) -> None:
-        svc = SessionService(indexed_db)
+        svc = SessionService(SessionRepository(indexed_db))
         result = await svc.get_session_detail("test-session-001", limit=2, offset=1)
         assert isinstance(result, Ok)
         detail = result.ok_value
@@ -55,7 +56,7 @@ class TestSessionService:
 
     @pytest.mark.asyncio
     async def test_get_message_offset(self, indexed_db: Database) -> None:
-        svc = SessionService(indexed_db)
+        svc = SessionService(SessionRepository(indexed_db))
         detail_result = await svc.get_session_detail("test-session-001", limit=1, offset=0)
         assert isinstance(detail_result, Ok)
         first_uuid = detail_result.ok_value.messages[0].uuid
@@ -64,13 +65,13 @@ class TestSessionService:
 
     @pytest.mark.asyncio
     async def test_get_session_not_found(self, indexed_db: Database) -> None:
-        svc = SessionService(indexed_db)
+        svc = SessionService(SessionRepository(indexed_db))
         result = await svc.get_session_detail("nonexistent")
         assert isinstance(result, Err)
 
     @pytest.mark.asyncio
     async def test_get_stats(self, indexed_db: Database) -> None:
-        svc = SessionService(indexed_db)
+        svc = SessionService(SessionRepository(indexed_db))
         result = await svc.get_stats()
         assert isinstance(result, Ok)
         stats = result.ok_value
@@ -78,7 +79,7 @@ class TestSessionService:
 
     @pytest.mark.asyncio
     async def test_get_recent(self, indexed_db: Database) -> None:
-        svc = SessionService(indexed_db)
+        svc = SessionService(SessionRepository(indexed_db))
         result = await svc.get_recent_sessions(limit=5)
         assert isinstance(result, Ok)
         assert len(result.ok_value) >= 1
@@ -87,14 +88,14 @@ class TestSessionService:
 class TestProjectService:
     @pytest.mark.asyncio
     async def test_list_projects(self, indexed_db: Database) -> None:
-        svc = ProjectService(indexed_db)
+        svc = ProjectService(ProjectRepository(indexed_db))
         result = await svc.list_projects()
         assert isinstance(result, Ok)
         assert len(result.ok_value) >= 1
 
     @pytest.mark.asyncio
     async def test_get_project_not_found(self, indexed_db: Database) -> None:
-        svc = ProjectService(indexed_db)
+        svc = ProjectService(ProjectRepository(indexed_db))
         result = await svc.get_project("nonexistent")
         assert isinstance(result, Err)
 
@@ -102,7 +103,7 @@ class TestProjectService:
 class TestAnalyticsService:
     @pytest.mark.asyncio
     async def test_get_tool_usage(self, indexed_db: Database) -> None:
-        svc = AnalyticsService(indexed_db)
+        svc = AnalyticsService(AnalyticsRepository(indexed_db))
         result = await svc.get_tool_usage()
         assert isinstance(result, Ok)
         tools = result.ok_value
@@ -111,7 +112,7 @@ class TestAnalyticsService:
 
     @pytest.mark.asyncio
     async def test_get_heatmap(self, indexed_db: Database) -> None:
-        svc = AnalyticsService(indexed_db)
+        svc = AnalyticsService(AnalyticsRepository(indexed_db))
         result = await svc.get_heatmap_data()
         assert isinstance(result, Ok)
         heatmap = result.ok_value

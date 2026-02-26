@@ -68,14 +68,11 @@ def _decode_project_id(project_id: str) -> str:
     return project_id.replace("-", "/", 1).replace("-", "/")
 
 
-def _encode_project_path(project_path: str) -> str:
-    """Encode '/Users/foo/src/myproject' -> '-Users-foo-src-myproject'."""
+def _stable_project_seed(project_path: str, fallback: str) -> str:
     normalized = project_path.strip().rstrip("/")
-    if not normalized:
-        return ""
-    if not normalized.startswith("/"):
-        normalized = "/" + normalized
-    return normalized.replace("/", "-")
+    if normalized:
+        return normalized
+    return fallback.strip() or "unknown"
 
 
 def _project_name_from_path(project_path: str) -> str:
@@ -88,13 +85,9 @@ def _project_name_from_path(project_path: str) -> str:
 
 def _provider_project_id(provider: str, project_path: str, fallback: str = "unknown") -> str:
     """Build a provider-scoped project ID."""
-    if provider == _CLAUDE:
-        encoded = _encode_project_path(project_path)
-        return encoded or fallback
-    encoded = _encode_project_path(project_path)
-    if encoded:
-        return f"{provider}:{encoded}"
-    return f"{provider}:{fallback}"
+    seed = _stable_project_seed(project_path, fallback)
+    digest = hashlib.sha1(f"{provider}:{seed}".encode()).hexdigest()[:16]
+    return f"{provider}:{digest}"
 
 
 def _provider_session_id(
@@ -165,14 +158,21 @@ def _discover_claude_sessions(config: Config) -> list[DiscoveredSession]:
             continue
 
         project_id = entry.name
-        project_path = _decode_project_id(project_id)
-        project_name = _project_name_from_path(project_path)
         index_data = _load_sessions_index(entry)
 
         for jsonl_path in sorted(entry.glob("*.jsonl")):
             stat = jsonl_path.stat()
             source_session_id = jsonl_path.stem
             metadata = index_data.get(source_session_id, {})
+            project_path = str(metadata.get("projectPath", "")).strip()
+            if not project_path:
+                project_path = _decode_project_id(project_id)
+            project_name = _project_name_from_path(project_path)
+            provider_project_id = _provider_project_id(
+                _CLAUDE,
+                project_path,
+                fallback=project_id,
+            )
 
             sessions.append(
                 DiscoveredSession(
@@ -184,7 +184,7 @@ def _discover_claude_sessions(config: Config) -> list[DiscoveredSession]:
                     source_session_id=source_session_id,
                     provider=_CLAUDE,
                     file_path=jsonl_path,
-                    project_id=project_id,
+                    project_id=provider_project_id,
                     project_path=project_path,
                     project_name=project_name,
                     mtime_ms=int(stat.st_mtime * 1000),
@@ -216,10 +216,7 @@ def _discover_codex_sessions(config: Config) -> list[DiscoveredSession]:
 
         project_path = metadata.project_path
         project_name = _project_name_from_path(project_path) if project_path else "Unknown"
-        project_fallback = (
-            _encode_project_path(project_path)
-            or f"unknown-{jsonl_path.parent.name}-{jsonl_path.parent.parent.name}"
-        )
+        project_fallback = str(jsonl_path.parent)
         project_id = _provider_project_id(_CODEX, project_path, fallback=project_fallback)
 
         sessions.append(

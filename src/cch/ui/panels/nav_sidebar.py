@@ -20,6 +20,8 @@ class NavSidebar(QWidget):
     nav_changed = Signal(str)
     pane_toggle_requested = Signal()
     keys_requested = Signal()
+    refresh_requested = Signal()
+    force_refresh_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -57,6 +59,28 @@ class NavSidebar(QWidget):
             self._buttons[name] = btn
 
         layout.addStretch()
+
+        self._refresh_btn = QPushButton("Inc Refresh")
+        self._refresh_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        self._refresh_btn.setIconSize(QSize(14, 14))
+        self._refresh_btn.setFixedSize(80, 34)
+        self._refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._refresh_btn.setStyleSheet(self._toolbar_button_style())
+        self._refresh_btn.setToolTip("Incremental refresh (changed files only)")
+        self._refresh_btn.clicked.connect(self.refresh_requested.emit)
+        layout.addWidget(self._refresh_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self._force_refresh_btn = QPushButton("Force")
+        self._force_refresh_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
+        )
+        self._force_refresh_btn.setIconSize(QSize(14, 14))
+        self._force_refresh_btn.setFixedSize(80, 34)
+        self._force_refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._force_refresh_btn.setStyleSheet(self._toolbar_button_style())
+        self._force_refresh_btn.setToolTip("Force full refresh (reindex all files)")
+        self._force_refresh_btn.clicked.connect(self.force_refresh_requested.emit)
+        layout.addWidget(self._force_refresh_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self._pane_btn = QPushButton("Focus")
         self._pane_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarShadeButton))
@@ -107,6 +131,17 @@ class NavSidebar(QWidget):
                 self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarShadeButton)
             )
             self._pane_btn.setToolTip("Focus session detail (Ctrl+Shift+M / F11)")
+
+    def set_refresh_busy(self, busy: bool) -> None:
+        """Update refresh button state while a refresh is running."""
+        self._refresh_btn.setEnabled(not busy)
+        self._force_refresh_btn.setEnabled(not busy)
+        if busy:
+            self._refresh_btn.setText("Running")
+            self._force_refresh_btn.setText("Running")
+            return
+        self._refresh_btn.setText("Inc Refresh")
+        self._force_refresh_btn.setText("Force")
 
     @staticmethod
     def _button_style(active: bool) -> str:

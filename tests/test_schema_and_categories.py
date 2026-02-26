@@ -6,6 +6,7 @@ import pytest
 from result import Ok
 
 from cch.data.db import SCHEMA_VERSION, Database
+from cch.data.repositories import SessionRepository
 from cch.models.categories import (
     ALL_CATEGORY_KEYS,
     normalize_category_keys,
@@ -109,7 +110,7 @@ async def test_session_detail_default_limit_window(in_memory_db: Database) -> No
     )
     await in_memory_db.commit()
 
-    svc = SessionService(in_memory_db)
+    svc = SessionService(SessionRepository(in_memory_db))
     result = await svc.get_session_detail(session_id)
     assert isinstance(result, Ok)
     assert result.ok_value.message_count == 1500

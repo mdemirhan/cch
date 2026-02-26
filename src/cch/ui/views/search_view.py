@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QPersistentModelIndex, Qt, Signal
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    QPersistentModelIndex,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -21,6 +28,7 @@ from cch.models.search import SearchResult
 from cch.ui.async_bridge import async_slot
 from cch.ui.theme import COLORS, provider_color, provider_label
 from cch.ui.widgets.delegates import SearchResultDelegate
+from cch.ui.widgets.filter_chip import FilterChip
 
 if TYPE_CHECKING:
     from cch.services.container import ServiceContainer
@@ -69,63 +77,6 @@ class SearchResultModel(QAbstractListModel):
         return None
 
 
-class _FilterChip(QPushButton):
-    """A toggleable filter chip button."""
-
-    def __init__(
-        self,
-        key: str,
-        label: str,
-        color: str,
-        *,
-        active: bool,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(label, parent)
-        self.key = key
-        self._base_label = label
-        self._color = color
-        self._active = active
-        self.setCheckable(True)
-        self.setChecked(active)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.toggled.connect(self._on_toggled)
-        self._apply_style()
-
-    def _on_toggled(self, checked: bool) -> None:
-        self._active = checked
-        self._apply_style()
-
-    def _apply_style(self) -> None:
-        if self._active:
-            self.setStyleSheet(
-                f"QPushButton {{ "
-                f"  background-color: {self._color}; color: white; "
-                f"  border: none; border-radius: 14px; padding: 5px 14px; "
-                f"  font-size: 12px; font-weight: 600; "
-                f"}} "
-                f"QPushButton:hover {{ opacity: 0.9; }}"
-            )
-        else:
-            self.setStyleSheet(
-                f"QPushButton {{ "
-                f"  background-color: transparent; color: {COLORS['text_muted']}; "
-                f"  border: 1px solid {COLORS['border']}; border-radius: 14px; "
-                f"  padding: 5px 14px; font-size: 12px; "
-                f"}} "
-                f"QPushButton:hover {{ "
-                f"  border-color: {self._color}; color: {self._color}; "
-                f"}}"
-            )
-
-    @property
-    def active(self) -> bool:
-        return self._active
-
-    def set_count(self, count: int) -> None:
-        self.setText(f"{self._base_label} ({count})")
-
-
 class SearchView(QWidget):
     """Search input + filters + results list."""
 
@@ -135,6 +86,11 @@ class SearchView(QWidget):
         super().__init__(parent)
         self._services: ServiceContainer | None = None
         self._active_providers: set[str] = set(_PROVIDERS)
+        self._search_generation = 0
+        self._active_searches = 0
+        self._debounce_timer = QTimer(self)
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.timeout.connect(self._do_search)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 0)
@@ -191,9 +147,9 @@ class SearchView(QWidget):
         providers_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
         project_layout.addWidget(providers_label)
 
-        self._provider_chips: dict[str, _FilterChip] = {}
+        self._provider_chips: dict[str, FilterChip] = {}
         for provider in _PROVIDERS:
-            chip = _FilterChip(
+            chip = FilterChip(
                 provider,
                 provider_label(provider),
                 provider_color(provider),
@@ -213,14 +169,14 @@ class SearchView(QWidget):
         chips_layout.setSpacing(6)
         chips_layout.setContentsMargins(0, 2, 0, 2)
 
-        filter_label = QLabel("Types:")
+        filter_label = QLabel("Categories:")
         filter_label.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
         chips_layout.addWidget(filter_label)
 
-        self._chips: list[_FilterChip] = []
+        self._chips: list[FilterChip] = []
         default_active = set(DEFAULT_ACTIVE_CATEGORY_KEYS)
         for spec in CATEGORY_FILTERS:
-            chip = _FilterChip(
+            chip = FilterChip(
                 spec.key,
                 spec.label,
                 spec.color,
@@ -255,7 +211,7 @@ class SearchView(QWidget):
         self._input.setFocus()
         self._input.selectAll()
 
-    def _get_active_roles(self) -> list[str] | None:
+    def _get_active_categories(self) -> list[str] | None:
         """Return active category filters, or None if all are active."""
         active = [chip.key for chip in self._chips if chip.active]
         if len(active) == len(self._chips):
@@ -283,29 +239,42 @@ class SearchView(QWidget):
 
     def _on_provider_or_project_changed(self) -> None:
         if self._input.text().strip():
-            self._do_search()
+            self._schedule_search()
 
     def _on_filter_changed(self) -> None:
         if self._input.text().strip():
-            self._do_search()
+            self._schedule_search()
+
+    def _schedule_search(self) -> None:
+        self._debounce_timer.start(220)
 
     @async_slot
     async def _do_search(self) -> None:
         query = self._input.text().strip()
-        if not query or not self._services:
+        if not self._services:
+            return
+        if not query:
+            self._model.set_results([])
+            self._status.setText("")
+            self._update_type_chip_counts({})
             return
 
+        self._search_generation += 1
+        generation = self._search_generation
         self._status.setText("Searching...")
+        self._active_searches += 1
         self._search_btn.setEnabled(False)
 
         try:
             result = await self._services.search_service.search(
                 query=query,
-                roles=self._get_active_roles(),
+                categories=self._get_active_categories(),
                 providers=self._selected_providers(),
                 project_query=self._project_input.text().strip(),
                 limit=100,
             )
+            if generation != self._search_generation:
+                return
             if isinstance(result, Ok):
                 sr = result.ok_value
                 self._model.set_results(sr.results)
@@ -314,7 +283,9 @@ class SearchView(QWidget):
             else:
                 self._status.setText(f"Error: {result.err_value}")
         finally:
-            self._search_btn.setEnabled(True)
+            self._active_searches = max(0, self._active_searches - 1)
+            if self._active_searches == 0:
+                self._search_btn.setEnabled(True)
 
     def _update_type_chip_counts(self, counts: dict[str, int]) -> None:
         for chip in self._chips:

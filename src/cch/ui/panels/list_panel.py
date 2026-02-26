@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListView,
     QMenu,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -27,6 +26,7 @@ from cch.models.projects import ProjectSummary
 from cch.ui.finder import show_in_file_manager
 from cch.ui.theme import COLORS, provider_color, provider_label
 from cch.ui.widgets.delegates import ProjectDelegate
+from cch.ui.widgets.filter_chip import FilterChip
 
 _PROVIDERS = ("claude", "codex", "gemini")
 
@@ -149,12 +149,16 @@ class ListPanel(QWidget):
         provider_title.setStyleSheet(f"font-size: 11px; color: {COLORS['text_muted']};")
         provider_row.addWidget(provider_title)
 
-        self._provider_buttons: dict[str, QPushButton] = {}
+        self._provider_buttons: dict[str, FilterChip] = {}
         for provider in _PROVIDERS:
-            button = QPushButton(provider_label(provider))
-            button.setCheckable(True)
-            button.setChecked(True)
-            button.clicked.connect(
+            button = FilterChip(
+                provider,
+                provider_label(provider),
+                provider_color(provider),
+                active=True,
+                parent=self,
+            )
+            button.toggled.connect(
                 lambda checked, p=provider: self._on_provider_toggled(p, checked)
             )
             self._provider_buttons[provider] = button
@@ -201,9 +205,9 @@ class ListPanel(QWidget):
 
     def _refresh_provider_button_styles(self) -> None:
         for provider, button in self._provider_buttons.items():
-            active = provider in self._active_providers
-            button.setChecked(active)
-            button.setStyleSheet(_provider_chip_style(provider, active))
+            button.blockSignals(True)
+            button.setChecked(provider in self._active_providers)
+            button.blockSignals(False)
 
     def _on_item_clicked(self, index: QModelIndex) -> None:
         project = self._model.project_at(index.row())
@@ -248,23 +252,3 @@ class ListPanel(QWidget):
                     self._list.setCurrentIndex(index)
                     break
         self._list.verticalScrollBar().setValue(max(0, state.vertical_scroll))
-
-
-def _provider_chip_style(provider: str, active: bool) -> str:
-    color = provider_color(provider)
-    if active:
-        return (
-            "QPushButton { "
-            f"background-color: {color}; color: white; "
-            "border: none; border-radius: 12px; padding: 4px 12px; "
-            "font-size: 11px; font-weight: 600; }"
-            "QPushButton:hover { opacity: 0.92; }"
-        )
-    return (
-        "QPushButton { "
-        f"background-color: transparent; color: {COLORS['text_muted']}; "
-        f"border: 1px solid {COLORS['border']}; border-radius: 12px; "
-        "padding: 4px 12px; font-size: 11px; font-weight: 500; }"
-        "QPushButton:hover { "
-        f"border-color: {color}; color: {color}; }}"
-    )

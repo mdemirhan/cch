@@ -1,34 +1,21 @@
-"""WebEngine-based message view — renders full session as a web page."""
+"""WebEngine-based message view that renders sessions as HTML."""
 
 from __future__ import annotations
 
-import importlib.resources
 import json
 import logging
 import tempfile
 import urllib.parse
-from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from cch.models.categories import (
-    CATEGORY_FILTERS,
-    DEFAULT_ACTIVE_CATEGORY_KEYS,
-    normalize_category_keys,
-)
+from cch.models.categories import DEFAULT_ACTIVE_CATEGORY_KEYS, normalize_category_keys
 from cch.models.sessions import SessionDetail
 from cch.ui.temp_cleanup import WEBVIEW_TEMP_MARKER_FILENAME
-from cch.ui.theme import (
-    format_cost,
-    format_datetime,
-    format_duration_ms,
-    format_tokens,
-    provider_label,
-)
-from cch.ui.widgets.message_widget import render_message_html
+from cch.ui.widgets.session_document import build_session_document
 
 _INLINE_CONTENT_LIMIT_BYTES = 1_500_000
 _MAX_DATA_URL_LENGTH = 1_900_000
@@ -38,126 +25,22 @@ _ZOOM_STEP = 0.1
 logger = logging.getLogger(__name__)
 
 
-def _load_template() -> str:
-    """Load the conversation.html template from the templates package."""
-    files = importlib.resources.files("cch.ui.templates")
-    return (files / "conversation.html").read_text(encoding="utf-8")
-
-
-_TEMPLATE: str | None = None
-
-
-def _get_template() -> str:
-    global _TEMPLATE  # noqa: PLW0603
-    if _TEMPLATE is None:
-        _TEMPLATE = _load_template()
-    return _TEMPLATE
-
-
-def _empty_state() -> str:
-    return '<div class="empty-state">Select a session to view the conversation</div>'
-
-
-def _render_error_message(msg_uuid: str) -> str:
-    """Fallback fragment for messages that fail to render."""
-    safe_uuid = escape(msg_uuid)
-    return (
-        f'<div class="message system" data-categories="system" '
-        f'data-message-uuid="{safe_uuid}" id="msg-{safe_uuid}">'
-        '<div class="msg-header"><span class="role-badge system">System</span></div>'
-        '<p style="color:#9AA3AA;font-size:12px;font-style:italic;margin:0;">'
-        "(message could not be rendered)</p></div>"
-    )
-
-
 def _encode_document(document: str) -> bytes:
-    """Encode HTML safely, replacing malformed unicode surrogates."""
     return document.encode("utf-8", errors="replace")
 
 
 def _data_url_length(content: bytes) -> int:
-    """Return the estimated data URL length used by QWebEngine setContent()."""
     prefix = "data:text/html;charset=UTF-8,"
     return len(prefix) + len(urllib.parse.quote_from_bytes(content))
 
 
 def _can_use_inline_content(content: bytes) -> bool:
-    """Return True if setContent() is likely safe (below data URL limits)."""
     if len(content) > _INLINE_CONTENT_LIMIT_BYTES:
         return False
     return _data_url_length(content) <= _MAX_DATA_URL_LENGTH
 
 
-def _build_session_header(detail: SessionDetail) -> str:
-    """Build the HTML for the session header (title, meta, stats)."""
-    from cch.services.cost import estimate_cost
-
-    title = detail.summary or detail.first_prompt or detail.session_id[:20]
-    title = " ".join(title.split())  # collapse whitespace
-
-    cost = estimate_cost(
-        detail.model,
-        detail.total_input_tokens,
-        detail.total_output_tokens,
-        detail.total_cache_read_tokens,
-        detail.total_cache_creation_tokens,
-    )
-
-    meta_parts: list[str] = []
-    if detail.project_name:
-        meta_parts.append(escape(detail.project_name))
-    if detail.provider:
-        meta_parts.append(escape(provider_label(detail.provider)))
-    if detail.model:
-        meta_parts.append(escape(detail.model))
-    if detail.git_branch:
-        meta_parts.append(escape(detail.git_branch))
-    if detail.created_at:
-        meta_parts.append(escape(format_datetime(detail.created_at)))
-    meta_html = " &middot; ".join(meta_parts)
-
-    stats: list[str] = [
-        f"{detail.message_count} messages",
-        f"{format_tokens(detail.total_input_tokens)} in",
-        f"{format_tokens(detail.total_output_tokens)} out",
-        format_cost(cost["total_cost"]),
-    ]
-    if detail.duration_ms:
-        stats.append(format_duration_ms(detail.duration_ms))
-    badges = "".join(f'<span class="stat-badge">{escape(s)}</span>' for s in stats if s)
-
-    return (
-        f'<div class="session-header">'
-        f'<div class="session-title">{escape(title)}</div>'
-        f'<div class="session-meta">{meta_html}</div>'
-        f'<div class="session-stats">{badges}</div>'
-        f"</div>"
-    )
-
-
-def _build_filter_chips(active_filters: set[str]) -> str:
-    """Build the HTML for filter chip buttons."""
-    chips: list[str] = []
-    for spec in CATEGORY_FILTERS:
-        classes = "filter-chip"
-        if spec.key not in active_filters:
-            classes += " inactive"
-        chips.append(
-            f'<button class="{classes}" data-filter="{spec.key}" '
-            f'data-label="{escape(spec.label)}" '
-            f'style="background-color: {spec.color};" '
-            f"onclick=\"toggleFilter('{spec.key}')\">{escape(spec.label)}</button>"
-        )
-    return "\n".join(chips)
-
-
 def _normalize_filters(raw: object) -> list[str] | None:
-    """Normalize raw JS filter state into known ordered filter keys.
-
-    Accepts:
-      - JSON string list (preferred)
-      - Python list/tuple/set of strings
-    """
     values: list[str] | None = None
     if isinstance(raw, str):
         if raw == "__CCH_NO_STATE__":
@@ -176,19 +59,42 @@ def _normalize_filters(raw: object) -> list[str] | None:
     return normalize_category_keys(values)
 
 
-def _filters_js_array(filters: list[str]) -> str:
-    """Serialize a list of filter names as a JS array literal."""
-    if not filters:
-        return "[]"
-    return "[" + ", ".join(f"'{name}'" for name in filters) + "]"
+class _HtmlTransport:
+    """HTML transport strategy for QWebEngine content loading."""
+
+    def __init__(self, webview: QWebEngineView) -> None:
+        self._webview = webview
+        self._temp_dir = tempfile.TemporaryDirectory(prefix="cch-webview-")
+        marker = Path(self._temp_dir.name) / WEBVIEW_TEMP_MARKER_FILENAME
+        try:
+            marker.write_text("cch webview temp dir\n", encoding="utf-8")
+        except OSError:
+            logger.debug("Failed creating webview temp marker: %s", marker, exc_info=True)
+        self._temp_files: list[Path] = []
+
+    def load_document(self, document: str, generation: int) -> None:
+        content = _encode_document(document)
+        if _can_use_inline_content(content):
+            self._webview.setContent(content, "text/html;charset=UTF-8")
+            return
+
+        target = Path(self._temp_dir.name) / f"conversation-{generation}.html"
+        target.write_bytes(content)
+        self._temp_files.append(target)
+        if len(self._temp_files) > 6:
+            old = self._temp_files.pop(0)
+            old.unlink(missing_ok=True)
+        self._webview.load(QUrl.fromLocalFile(str(target)))
+
+    def dispose(self) -> None:
+        for old in self._temp_files:
+            old.unlink(missing_ok=True)
+        self._temp_files.clear()
+        self._temp_dir.cleanup()
 
 
 class MessageWebView(QWidget):
-    """Full session view powered by QWebEngineView.
-
-    Renders session header, search, filter chips, and messages
-    all inside a single web page.
-    """
+    """Full session view powered by QWebEngineView."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -199,6 +105,8 @@ class MessageWebView(QWidget):
 
         self._webview = QWebEngineView()
         layout.addWidget(self._webview)
+        self._transport = _HtmlTransport(self._webview)
+
         self._pending_detail: SessionDetail | None = None
         self._pending_focus_message_uuid: str = ""
         self._current_focus_message_uuid: str = ""
@@ -209,13 +117,7 @@ class MessageWebView(QWidget):
         self._capture_timeout = QTimer(self)
         self._capture_timeout.setSingleShot(True)
         self._capture_timeout.timeout.connect(self._on_capture_timeout)
-        self._temp_dir = tempfile.TemporaryDirectory(prefix="cch-webview-")
-        marker = Path(self._temp_dir.name) / WEBVIEW_TEMP_MARKER_FILENAME
-        try:
-            marker.write_text("cch webview temp dir\n", encoding="utf-8")
-        except OSError:
-            logger.debug("Failed creating webview temp marker: %s", marker, exc_info=True)
-        self._temp_files: list[Path] = []
+
         self._webview.loadFinished.connect(self._on_load_finished)
         self._zoom_factor = 1.0
         self._webview.setZoomFactor(self._zoom_factor)
@@ -225,11 +127,9 @@ class MessageWebView(QWidget):
         self._pending_detail = detail
         self._pending_focus_message_uuid = focus_message_uuid
         self._render_generation += 1
-        generation = self._render_generation
-        self._capture_filters_and_render(generation)
+        self._capture_filters_and_render(self._render_generation)
 
     def _capture_filters_and_render(self, generation: int) -> None:
-        """Capture persisted filters from the current page before replacing HTML."""
         self._capture_generation = generation
         self._capture_timeout.start(320)
         script = (
@@ -260,14 +160,12 @@ class MessageWebView(QWidget):
         self._webview.page().runJavaScript(script, _on_filters)
 
     def _on_capture_timeout(self) -> None:
-        """Render even if JS callback doesn't return (e.g., stalled page)."""
         generation = self._capture_generation
         if generation != self._render_generation:
             return
         self._render_pending(generation)
 
     def _render_pending(self, generation: int) -> None:
-        """Render the latest pending session request."""
         if generation != self._render_generation:
             return
         if generation == self._rendered_generation:
@@ -275,63 +173,13 @@ class MessageWebView(QWidget):
         detail = self._pending_detail
         if detail is None:
             return
+
         self._current_focus_message_uuid = self._pending_focus_message_uuid
-
-        # Build header
-        header_html = _build_session_header(detail)
-
-        # Build filter chips
-        active_filters = set(self._active_filters)
-        chips_html = _build_filter_chips(active_filters)
-
-        # Build messages
-        parts: list[str] = []
-        for msg in detail.messages:
-            try:
-                html = render_message_html(msg)
-            except Exception:
-                logger.exception(
-                    "Failed rendering message %s in session %s",
-                    msg.uuid,
-                    detail.session_id,
-                )
-                html = _render_error_message(msg.uuid)
-            if html:
-                parts.append(html)
-        body = "\n".join(parts) if parts else _empty_state()
-
-        # Build initial filter state JS array
-        initial_filters = _filters_js_array(self._active_filters)
-
-        # Assemble the page
-        template = _get_template()
-        document = (
-            template.replace("{session_header}", header_html)
-            .replace("{filter_chips}", chips_html)
-            .replace("{message_body}", body)
-            .replace("{initial_filters}", initial_filters)
-        )
+        document = build_session_document(detail, self._active_filters)
         self._rendered_generation = generation
-        self._load_document(document)
-
-    def _load_document(self, document: str) -> None:
-        """Load HTML using the safest transport for the payload size."""
-        content = _encode_document(document)
-        if _can_use_inline_content(content):
-            self._webview.setContent(content, "text/html;charset=UTF-8")
-            return
-
-        # Large pages can exceed QtWebEngine's data URL limits; load from file.
-        target = Path(self._temp_dir.name) / f"conversation-{self._render_generation}.html"
-        target.write_bytes(content)
-        self._temp_files.append(target)
-        if len(self._temp_files) > 6:
-            old = self._temp_files.pop(0)
-            old.unlink(missing_ok=True)
-        self._webview.load(QUrl.fromLocalFile(str(target)))
+        self._transport.load_document(document, generation)
 
     def _on_load_finished(self, ok: bool) -> None:
-        """Apply pending message focus after the page is loaded."""
         if not ok or not self._current_focus_message_uuid:
             return
         target = self._current_focus_message_uuid
@@ -359,24 +207,13 @@ class MessageWebView(QWidget):
         )
         self._webview.page().runJavaScript(script)
 
-    def scroll_to_top(self) -> None:
-        """Scroll to the top of the conversation."""
-        self._webview.page().runJavaScript("scrollToTop()")
-
-    def scroll_to_bottom(self) -> None:
-        """Scroll to the bottom of the conversation."""
-        self._webview.page().runJavaScript("scrollToBottom()")
-
     def zoom_in(self) -> float:
-        """Increase webview zoom and return the new factor."""
         return self._set_zoom(self._zoom_factor + _ZOOM_STEP)
 
     def zoom_out(self) -> float:
-        """Decrease webview zoom and return the new factor."""
         return self._set_zoom(self._zoom_factor - _ZOOM_STEP)
 
     def reset_zoom(self) -> float:
-        """Reset webview zoom to default and return the new factor."""
         return self._set_zoom(1.0)
 
     def _set_zoom(self, factor: float) -> float:
@@ -386,11 +223,7 @@ class MessageWebView(QWidget):
         return self._zoom_factor
 
     def dispose(self) -> None:
-        """Release webview resources during app shutdown."""
         self._capture_timeout.stop()
         self._webview.stop()
         self._webview.setHtml("<html><body></body></html>")
-        for old in self._temp_files:
-            old.unlink(missing_ok=True)
-        self._temp_files.clear()
-        self._temp_dir.cleanup()
+        self._transport.dispose()

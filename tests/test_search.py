@@ -27,16 +27,16 @@ class TestSearchEngine:
         assert len(results.results) >= 1
 
     @pytest.mark.asyncio
-    async def test_search_with_role_filter(self, indexed_db: Database) -> None:
+    async def test_search_with_category_filter(self, indexed_db: Database) -> None:
         engine = SearchEngine(indexed_db)
 
-        user_results = await engine.search("bug", roles=["user"])
+        user_results = await engine.search("bug", categories=["user"])
         assert user_results.total_count >= 1
 
-        thinking_results = await engine.search("think", roles=["thinking"])
+        thinking_results = await engine.search("think", categories=["thinking"])
         assert thinking_results.total_count >= 1
 
-        system_results = await engine.search("Fixed", roles=["system"])
+        system_results = await engine.search("Fixed", categories=["system"])
         assert system_results.total_count >= 1
 
     @pytest.mark.asyncio
@@ -88,11 +88,11 @@ class TestSearchEngine:
         assert sum(results.type_counts.values()) == results.total_count
 
     @pytest.mark.asyncio
-    async def test_search_role_filter_does_not_hide_type_count_facets(
+    async def test_search_category_filter_does_not_hide_type_count_facets(
         self, indexed_db: Database
     ) -> None:
         engine = SearchEngine(indexed_db)
         all_results = await engine.search("bug")
-        filtered = await engine.search("bug", roles=["user"])
+        filtered = await engine.search("bug", categories=["user"])
         assert filtered.total_count <= all_results.total_count
         assert filtered.type_counts == all_results.type_counts
