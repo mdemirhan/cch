@@ -221,15 +221,15 @@ def _provider_chip_style(provider: str, active: bool) -> str:
         return (
             "QPushButton { "
             f"background-color: {color}; color: white; "
-            "border: none; border-radius: 16px; padding: 5px 16px; min-height: 28px; "
-            "font-size: 12px; font-weight: 600; }"
+            "border: none; border-radius: 12px; padding: 4px 12px; "
+            "font-size: 11px; font-weight: 600; }"
             "QPushButton:hover { opacity: 0.92; }"
         )
     return (
         "QPushButton { "
         f"background-color: transparent; color: {COLORS['text_muted']}; "
-        f"border: 1px solid {COLORS['border']}; border-radius: 16px; "
-        "padding: 5px 16px; min-height: 28px; font-size: 12px; font-weight: 500; }"
+        f"border: 1px solid {COLORS['border']}; border-radius: 12px; "
+        "padding: 4px 12px; font-size: 11px; font-weight: 500; }"
         "QPushButton:hover { "
         f"border-color: {color}; color: {color}; }}"
     )

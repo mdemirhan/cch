@@ -34,6 +34,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _ensure_webengine_flags() -> None:
+    """Apply Chromium flags before QApplication starts."""
+    flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "").strip().split()
+    if "--disable-features=SkiaGraphite" not in flags:
+        flags.append("--disable-features=SkiaGraphite")
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join(flags).strip()
+
+
 class CCHMainWindow(QMainWindow):
     """Three-panel master-detail main window."""
 
@@ -234,6 +242,7 @@ class CCHMainWindow(QMainWindow):
 def run_app(config: Config) -> None:
     """Entry point: create QApplication, event loop, main window, and run."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    _ensure_webengine_flags()
 
     app = QApplication(sys.argv)
     app.setApplicationName("Code Chat History")

@@ -228,7 +228,9 @@ class SearchView(QWidget):
         self._list.setItemDelegate(SearchResultDelegate(self))
         self._list.setMouseTracking(True)
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._list.clicked.connect(self._on_result_clicked)
+        self._list.clicked.connect(self._on_result_activated)
+        self._list.activated.connect(self._on_result_activated)
+        self._list.doubleClicked.connect(self._on_result_activated)
         layout.addWidget(self._list, stretch=1)
 
     def set_services(self, services: ServiceContainer) -> None:
@@ -363,7 +365,7 @@ class SearchView(QWidget):
         finally:
             self._search_btn.setEnabled(True)
 
-    def _on_result_clicked(self, index: QModelIndex) -> None:
+    def _on_result_activated(self, index: QModelIndex) -> None:
         result = self._model.result_at(index.row())
         if result:
             self.session_requested.emit(result.session_id, result.message_uuid)

@@ -241,12 +241,14 @@ def _render_tool_call_only(
 
 def _render_system(msg: MessageView, categories: set[str]) -> str:
     """Render a system or summary message."""
-    if not msg.content_text.strip():
-        return ""
     label = "Summary" if msg.type == "summary" else "System"
     timestamp = msg.timestamp[:19] if msg.timestamp else ""
-    md_html = render_markdown(msg.content_text[:5000])
-    body = _extract_body(md_html)
+    text = _system_text(msg)
+    if text:
+        md_html = render_markdown(text[:5000])
+        body = _extract_body(md_html)
+    else:
+        body = _empty_placeholder("(empty system message)")
 
     return (
         f"<div {_message_attrs(msg, categories, 'system')}>"
@@ -289,7 +291,7 @@ def _render_tool_result(
         )
 
     if not parts:
-        return ""
+        parts.append(_empty_placeholder("(empty tool result)"))
 
     return f"<div {_message_attrs(msg, categories, 'tool-result')}>{''.join(parts)}</div>"
 
@@ -314,3 +316,27 @@ def _extract_body(html: str) -> str:
     if start != -1 and end != -1:
         return html[start + 6 : end]
     return html
+
+
+def _system_text(msg: MessageView) -> str:
+    """Prefer content_text; fallback to text blocks from content_json."""
+    text = msg.content_text.strip()
+    if text:
+        return text
+    blocks = _parse_content_json(msg.content_json)
+    parts: list[str] = []
+    for block in blocks:
+        if block.get("type") != "text":
+            continue
+        value = str(block.get("text", "")).strip()
+        if value:
+            parts.append(value)
+    return "\n\n".join(parts).strip()
+
+
+def _empty_placeholder(text: str) -> str:
+    """Render a lightweight muted placeholder paragraph."""
+    return (
+        f'<p style="color:#9AA3AA;font-size:12px;font-style:italic;'
+        f'margin:0 0 4px 0;">{escape(text)}</p>'
+    )

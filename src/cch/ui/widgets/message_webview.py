@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import importlib.resources
+import tempfile
 from html import escape
+from pathlib import Path
 
+from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
@@ -32,6 +35,7 @@ _ALL_FILTER_NAMES = [name for name, _, _ in _FILTERS]
 _VALID_FILTERS = set(_ALL_FILTER_NAMES)
 _DEFAULT_ACTIVE_FILTERS = ["user", "assistant"]
 _PERSISTED_ACTIVE_FILTERS: list[str] = list(_DEFAULT_ACTIVE_FILTERS)
+_INLINE_CONTENT_LIMIT_BYTES = 1_500_000
 
 
 def _load_template() -> str:
@@ -151,6 +155,13 @@ class MessageWebView(QWidget):
         self._pending_focus_message_uuid: str = ""
         self._current_focus_message_uuid: str = ""
         self._render_generation = 0
+        self._rendered_generation = -1
+        self._capture_generation = 0
+        self._capture_timeout = QTimer(self)
+        self._capture_timeout.setSingleShot(True)
+        self._capture_timeout.timeout.connect(self._on_capture_timeout)
+        self._temp_dir = tempfile.TemporaryDirectory(prefix="cch-webview-")
+        self._temp_files: list[Path] = []
         self._webview.loadFinished.connect(self._on_load_finished)
 
     def show_session(self, detail: SessionDetail, *, focus_message_uuid: str = "") -> None:
@@ -163,6 +174,8 @@ class MessageWebView(QWidget):
 
     def _capture_filters_and_render(self, generation: int) -> None:
         """Capture persisted filters from the current page before replacing HTML."""
+        self._capture_generation = generation
+        self._capture_timeout.start(120)
         script = (
             "(function(){"
             "try {"
@@ -184,13 +197,24 @@ class MessageWebView(QWidget):
             normalized = _normalize_filters(raw)
             if normalized is not None:
                 _PERSISTED_ACTIVE_FILTERS = normalized
+            if self._capture_timeout.isActive():
+                self._capture_timeout.stop()
             self._render_pending(generation)
 
         self._webview.page().runJavaScript(script, _on_filters)
 
+    def _on_capture_timeout(self) -> None:
+        """Render even if JS callback doesn't return (e.g., stalled page)."""
+        generation = self._capture_generation
+        if generation != self._render_generation:
+            return
+        self._render_pending(generation)
+
     def _render_pending(self, generation: int) -> None:
         """Render the latest pending session request."""
         if generation != self._render_generation:
+            return
+        if generation == self._rendered_generation:
             return
         detail = self._pending_detail
         if detail is None:
@@ -223,7 +247,24 @@ class MessageWebView(QWidget):
             .replace("{message_body}", body)
             .replace("{initial_filters}", initial_filters)
         )
-        self._webview.setHtml(document)
+        self._rendered_generation = generation
+        self._load_document(document)
+
+    def _load_document(self, document: str) -> None:
+        """Load HTML using the safest transport for the payload size."""
+        content = document.encode("utf-8")
+        if len(content) <= _INLINE_CONTENT_LIMIT_BYTES:
+            self._webview.setContent(content, "text/html;charset=UTF-8")
+            return
+
+        # Large pages can exceed QtWebEngine's data URL limits; load from file.
+        target = Path(self._temp_dir.name) / f"conversation-{self._render_generation}.html"
+        target.write_bytes(content)
+        self._temp_files.append(target)
+        if len(self._temp_files) > 6:
+            old = self._temp_files.pop(0)
+            old.unlink(missing_ok=True)
+        self._webview.load(QUrl.fromLocalFile(str(target)))
 
     def _on_load_finished(self, ok: bool) -> None:
         """Apply pending message focus after the page is loaded."""
@@ -234,9 +275,22 @@ class MessageWebView(QWidget):
         script = (
             f"(function(target){{"
             "if (!target) return;"
-            "if (typeof focusMessageByUuid === 'function') {{"
-            "  focusMessageByUuid(target);"
-            "}}"
+            "var tries = 0;"
+            "var maxTries = 24;"
+            "var delayMs = 50;"
+            "function attempt(){"
+            "  tries += 1;"
+            "  if (typeof focusMessageByUuid !== 'function') {"
+            "    if (tries < maxTries) { setTimeout(attempt, delayMs); }"
+            "    return;"
+            "  }"
+            "  var focused = false;"
+            "  try { focused = !!focusMessageByUuid(target); } catch (_e) { focused = false; }"
+            "  if (!focused && tries < maxTries) {"
+            "    setTimeout(attempt, delayMs);"
+            "  }"
+            "}"
+            "attempt();"
             f"}})({repr(target)})"
         )
         self._webview.page().runJavaScript(script)
