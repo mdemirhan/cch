@@ -20,6 +20,7 @@ from cch.models.categories import (
     normalize_category_keys,
 )
 from cch.models.sessions import SessionDetail
+from cch.ui.temp_cleanup import WEBVIEW_TEMP_MARKER_FILENAME
 from cch.ui.theme import (
     format_cost,
     format_datetime,
@@ -206,6 +207,11 @@ class MessageWebView(QWidget):
         self._capture_timeout.setSingleShot(True)
         self._capture_timeout.timeout.connect(self._on_capture_timeout)
         self._temp_dir = tempfile.TemporaryDirectory(prefix="cch-webview-")
+        marker = Path(self._temp_dir.name) / WEBVIEW_TEMP_MARKER_FILENAME
+        try:
+            marker.write_text("cch webview temp dir\n", encoding="utf-8")
+        except OSError:
+            logger.debug("Failed creating webview temp marker: %s", marker, exc_info=True)
         self._temp_files: list[Path] = []
         self._webview.loadFinished.connect(self._on_load_finished)
 
