@@ -54,9 +54,14 @@ class Indexer:
 
         total = len(sessions)
         indexed_files = await self._load_indexed_files() if not force else {}
+        indexed_sessions = await self._load_indexed_sessions() if not force else {}
 
         for i, session in enumerate(sessions):
-            if not force and not self._needs_reindex_cached(session, indexed_files):
+            if not force and not self._needs_reindex_cached(
+                session,
+                indexed_files,
+                indexed_sessions,
+            ):
                 result.files_skipped += 1
                 continue
 
@@ -101,14 +106,23 @@ class Indexer:
             for row in rows
         }
 
+    async def _load_indexed_sessions(self) -> dict[str, str]:
+        """Load session id by file path to detect stale indexed_files rows."""
+        rows = await self._db.fetch_all("SELECT file_path, session_id FROM sessions")
+        return {str(row["file_path"]): str(row["session_id"]) for row in rows}
+
     @staticmethod
     def _needs_reindex_cached(
         session: DiscoveredSession,
         indexed_files: dict[str, tuple[int, int]],
+        indexed_sessions: dict[str, str],
     ) -> bool:
         """Check if a session needs reindexing using cached indexed-file metadata."""
         current = indexed_files.get(str(session.file_path))
         if current is None:
+            return True
+        existing_session_id = indexed_sessions.get(str(session.file_path))
+        if existing_session_id != session.session_id:
             return True
         return current != (session.mtime_ms, session.file_size)
 
@@ -368,8 +382,12 @@ class Indexer:
     ) -> None:
         """Insert or update a project."""
         await self._db.execute(
-            """INSERT OR REPLACE INTO projects (project_id, provider, project_path, project_name)
-            VALUES (?, ?, ?, ?)""",
+            """INSERT INTO projects (project_id, provider, project_path, project_name)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(project_id) DO UPDATE SET
+                   provider = excluded.provider,
+                   project_path = excluded.project_path,
+                   project_name = excluded.project_name""",
             (project_id, provider, project_path, project_name),
         )
 

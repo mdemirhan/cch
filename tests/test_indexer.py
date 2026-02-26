@@ -111,3 +111,32 @@ class TestIndexer:
         message_row = await test_db.fetch_one("SELECT COUNT(*) as cnt FROM messages")
         assert session_row is not None and session_row["cnt"] >= 2
         assert message_row is not None and message_row["cnt"] >= 10
+
+    @pytest.mark.asyncio
+    async def test_stale_indexed_files_without_session_reindexes(
+        self,
+        test_db: Database,
+        test_config: Config,
+    ) -> None:
+        """If indexed_files says up-to-date but sessions row is missing, reindex should heal."""
+        indexer = Indexer(test_db, test_config)
+        await indexer.index_all(force=True)
+
+        session = (test_config.projects_dir / "-tmp-test-project" / "test-session-001.jsonl")
+        stat = session.stat()
+        await test_db.execute("DELETE FROM messages")
+        await test_db.execute("DELETE FROM tool_calls")
+        await test_db.execute("DELETE FROM sessions")
+        await test_db.execute(
+            """INSERT OR REPLACE INTO indexed_files
+               (file_path, file_mtime_ms, file_size, indexed_at)
+               VALUES (?, ?, ?, '2026-02-26T00:00:00Z')""",
+            (str(session), int(stat.st_mtime * 1000), stat.st_size),
+        )
+        await test_db.commit()
+
+        result = await indexer.index_all(force=False)
+        assert result.files_indexed >= 1
+        row = await test_db.fetch_one("SELECT COUNT(*) as cnt FROM sessions")
+        assert row is not None
+        assert row["cnt"] >= 1
