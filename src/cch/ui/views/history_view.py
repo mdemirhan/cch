@@ -29,4 +29,7 @@ class HistoryView(QWidget):
     ) -> None:
         """Display a full session."""
         self._webview.show_session(detail, focus_message_uuid=focus_message_uuid)
-        self._webview.scroll_to_top()
+
+    def dispose(self) -> None:
+        """Release webview resources during shutdown."""
+        self._webview.dispose()

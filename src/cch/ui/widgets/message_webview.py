@@ -11,6 +11,11 @@ from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from cch.models.categories import (
+    CATEGORY_FILTERS,
+    DEFAULT_ACTIVE_CATEGORY_KEYS,
+    normalize_category_keys,
+)
 from cch.models.sessions import SessionDetail
 from cch.ui.theme import (
     format_cost,
@@ -21,20 +26,6 @@ from cch.ui.theme import (
 )
 from cch.ui.widgets.message_widget import render_message_html
 
-# Filter definitions: (name, label, color)
-_FILTERS = [
-    ("user", "User", "#E67E22"),
-    ("assistant", "Assistant", "#27AE60"),
-    ("tool_call", "Tool Calls", "#8E44AD"),
-    ("thinking", "Thinking", "#9B59B6"),
-    ("tool_result", "Results", "#999999"),
-    ("system", "System", "#F39C12"),
-]
-
-_ALL_FILTER_NAMES = [name for name, _, _ in _FILTERS]
-_VALID_FILTERS = set(_ALL_FILTER_NAMES)
-_DEFAULT_ACTIVE_FILTERS = ["user", "assistant"]
-_PERSISTED_ACTIVE_FILTERS: list[str] = list(_DEFAULT_ACTIVE_FILTERS)
 _INLINE_CONTENT_LIMIT_BYTES = 1_500_000
 
 
@@ -108,14 +99,14 @@ def _build_session_header(detail: SessionDetail) -> str:
 def _build_filter_chips(active_filters: set[str]) -> str:
     """Build the HTML for filter chip buttons."""
     chips: list[str] = []
-    for name, label, color in _FILTERS:
+    for spec in CATEGORY_FILTERS:
         classes = "filter-chip"
-        if name not in active_filters:
+        if spec.key not in active_filters:
             classes += " inactive"
         chips.append(
-            f'<button class="{classes}" data-filter="{name}" '
-            f'style="background-color: {color};" '
-            f"onclick=\"toggleFilter('{name}')\">{escape(label)}</button>"
+            f'<button class="{classes}" data-filter="{spec.key}" '
+            f'style="background-color: {spec.color};" '
+            f"onclick=\"toggleFilter('{spec.key}')\">{escape(spec.label)}</button>"
         )
     return "\n".join(chips)
 
@@ -124,8 +115,8 @@ def _normalize_filters(raw: object) -> list[str] | None:
     """Normalize a raw JS list of filter names into known ordered names."""
     if not isinstance(raw, list):
         return None
-    selected = {item for item in raw if isinstance(item, str) and item in _VALID_FILTERS}
-    return [name for name in _ALL_FILTER_NAMES if name in selected]
+    values = [item for item in raw if isinstance(item, str)]
+    return normalize_category_keys(values)
 
 
 def _filters_js_array(filters: list[str]) -> str:
@@ -157,6 +148,7 @@ class MessageWebView(QWidget):
         self._render_generation = 0
         self._rendered_generation = -1
         self._capture_generation = 0
+        self._active_filters: list[str] = list(DEFAULT_ACTIVE_CATEGORY_KEYS)
         self._capture_timeout = QTimer(self)
         self._capture_timeout.setSingleShot(True)
         self._capture_timeout.timeout.connect(self._on_capture_timeout)
@@ -176,27 +168,14 @@ class MessageWebView(QWidget):
         """Capture persisted filters from the current page before replacing HTML."""
         self._capture_generation = generation
         self._capture_timeout.start(120)
-        script = (
-            "(function(){"
-            "try {"
-            "  if (!window.name) return null;"
-            "  var state = JSON.parse(window.name);"
-            "  if (!state || typeof state !== 'object') return null;"
-            "  var payload = state['cch_state_v1'];"
-            "  if (!payload || typeof payload !== 'object') return null;"
-            "  if (!Array.isArray(payload.active_filters)) return null;"
-            "  return payload.active_filters.slice();"
-            "} catch (_e) { return null; }"
-            "})()"
-        )
+        script = "Array.isArray(window._activeFilters) ? window._activeFilters.slice() : null"
 
         def _on_filters(raw: object) -> None:
-            global _PERSISTED_ACTIVE_FILTERS  # noqa: PLW0603
             if generation != self._render_generation:
                 return
             normalized = _normalize_filters(raw)
             if normalized is not None:
-                _PERSISTED_ACTIVE_FILTERS = normalized
+                self._active_filters = normalized
             if self._capture_timeout.isActive():
                 self._capture_timeout.stop()
             self._render_pending(generation)
@@ -225,7 +204,7 @@ class MessageWebView(QWidget):
         header_html = _build_session_header(detail)
 
         # Build filter chips
-        active_filters = set(_PERSISTED_ACTIVE_FILTERS)
+        active_filters = set(self._active_filters or DEFAULT_ACTIVE_CATEGORY_KEYS)
         chips_html = _build_filter_chips(active_filters)
 
         # Build messages
@@ -237,7 +216,9 @@ class MessageWebView(QWidget):
         body = "\n".join(parts) if parts else _empty_state()
 
         # Build initial filter state JS array
-        initial_filters = _filters_js_array(_PERSISTED_ACTIVE_FILTERS)
+        initial_filters = _filters_js_array(
+            self._active_filters or list(DEFAULT_ACTIVE_CATEGORY_KEYS)
+        )
 
         # Assemble the page
         template = _get_template()
@@ -302,3 +283,13 @@ class MessageWebView(QWidget):
     def scroll_to_bottom(self) -> None:
         """Scroll to the bottom of the conversation."""
         self._webview.page().runJavaScript("scrollToBottom()")
+
+    def dispose(self) -> None:
+        """Release webview resources during app shutdown."""
+        self._capture_timeout.stop()
+        self._webview.stop()
+        self._webview.setHtml("<html><body></body></html>")
+        for old in self._temp_files:
+            old.unlink(missing_ok=True)
+        self._temp_files.clear()
+        self._temp_dir.cleanup()

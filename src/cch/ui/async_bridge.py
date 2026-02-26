@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
 logger = logging.getLogger(__name__)
+_SCHEDULED_TASKS: set[asyncio.Task[Any]] = set()
 
 
 def create_event_loop(app: QApplication) -> QEventLoop:
@@ -37,7 +38,9 @@ def async_slot[**P, T](
     @functools.wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> None:
         coro = func(*args, **kwargs)
-        future = asyncio.ensure_future(coro)
+        future = asyncio.create_task(coro)
+        _SCHEDULED_TASKS.add(future)
+        future.add_done_callback(_discard_task)
         future.add_done_callback(_log_exception)
 
     return wrapper
@@ -54,4 +57,21 @@ def _log_exception(future: asyncio.Future[Any]) -> None:
 
 def schedule[T](coro: Coroutine[Any, Any, T]) -> asyncio.Future[T]:
     """Schedule an async coroutine on the running event loop."""
-    return asyncio.ensure_future(coro)
+    task: asyncio.Task[T] = asyncio.create_task(coro)
+    _SCHEDULED_TASKS.add(task)
+    task.add_done_callback(_discard_task)
+    task.add_done_callback(_log_exception)
+    return task
+
+
+def cancel_all_tasks() -> None:
+    """Cancel all tracked outstanding tasks."""
+    current = asyncio.current_task()
+    for task in list(_SCHEDULED_TASKS):
+        if task is current:
+            continue
+        task.cancel()
+
+
+def _discard_task(task: asyncio.Future[Any]) -> None:
+    _SCHEDULED_TASKS.discard(task)  # type: ignore[arg-type]

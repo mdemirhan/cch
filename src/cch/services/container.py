@@ -32,7 +32,7 @@ class ServiceContainer:
     async def create(cls, config: Config) -> ServiceContainer:
         """Async factory that wires all dependencies."""
         db = Database(config.db_path)
-        await db.__aenter__()
+        await db.connect()
 
         indexer = Indexer(db, config)
         search_engine = SearchEngine(db)
@@ -53,4 +53,4 @@ class ServiceContainer:
 
     async def close(self) -> None:
         """Shut down all services."""
-        await self.db.__aexit__(None, None, None)
+        await self.db.close()

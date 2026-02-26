@@ -95,3 +95,7 @@ class ContentPanel(QStackedWidget):
         """Focus the search input."""
         self.setCurrentWidget(self._search_view)
         self._search_view.focus_input()
+
+    def dispose(self) -> None:
+        """Release child view resources for shutdown."""
+        self._history_view.dispose()

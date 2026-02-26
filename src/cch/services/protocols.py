@@ -33,6 +33,8 @@ class SessionServiceProtocol(Protocol):
         offset: int = 0,
     ) -> Result[SessionDetail, str]: ...
 
+    async def get_message_offset(self, session_id: str, message_uuid: str) -> int | None: ...
+
 
 class ProjectServiceProtocol(Protocol):
     """Interface for project operations."""

@@ -32,6 +32,12 @@ class TestSearchEngine:
         user_results = await engine.search("bug", roles=["user"])
         assert user_results.total_count >= 1
 
+        thinking_results = await engine.search("think", roles=["thinking"])
+        assert thinking_results.total_count >= 1
+
+        system_results = await engine.search("Fixed", roles=["system"])
+        assert system_results.total_count >= 1
+
     @pytest.mark.asyncio
     async def test_empty_query(self, indexed_db: Database) -> None:
         engine = SearchEngine(indexed_db)

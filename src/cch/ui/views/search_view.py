@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 from result import Ok
 
+from cch.models.categories import CATEGORY_FILTERS, DEFAULT_ACTIVE_CATEGORY_KEYS
 from cch.models.search import SearchResult
 from cch.ui.async_bridge import async_slot, schedule
 from cch.ui.theme import COLORS, provider_label
@@ -25,18 +26,6 @@ from cch.ui.widgets.delegates import SearchResultDelegate
 
 if TYPE_CHECKING:
     from cch.services.container import ServiceContainer
-
-# Filter definitions: (key, label, color)
-_SEARCH_FILTERS = [
-    ("user", "User", "#E67E22"),
-    ("assistant", "Assistant", "#27AE60"),
-    ("tool_call", "Tool Calls", "#8E44AD"),
-    ("thinking", "Thinking", "#9B59B6"),
-    ("tool_result", "Results", "#999999"),
-    ("system", "System", "#F39C12"),
-]
-_DEFAULT_ACTIVE_FILTERS = {"user", "assistant"}
-
 
 class SearchResultModel(QAbstractListModel):
     """Model for search results."""
@@ -187,12 +176,13 @@ class SearchView(QWidget):
         chips_layout.addWidget(filter_label)
 
         self._chips: list[_FilterChip] = []
-        for key, label, color in _SEARCH_FILTERS:
+        default_active = set(DEFAULT_ACTIVE_CATEGORY_KEYS)
+        for spec in CATEGORY_FILTERS:
             chip = _FilterChip(
-                key,
-                label,
-                color,
-                active=key in _DEFAULT_ACTIVE_FILTERS,
+                spec.key,
+                spec.label,
+                spec.color,
+                active=spec.key in default_active,
                 parent=self,
             )
             chip.toggled.connect(lambda _checked: self._on_filter_changed())
@@ -228,9 +218,7 @@ class SearchView(QWidget):
         self._list.setItemDelegate(SearchResultDelegate(self))
         self._list.setMouseTracking(True)
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._list.clicked.connect(self._on_result_activated)
         self._list.activated.connect(self._on_result_activated)
-        self._list.doubleClicked.connect(self._on_result_activated)
         layout.addWidget(self._list, stretch=1)
 
     def set_services(self, services: ServiceContainer) -> None:

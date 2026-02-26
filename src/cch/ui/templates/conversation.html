@@ -572,8 +572,6 @@ mark.search-hl {
 <script>
 /* ── Filter state ── */
 var _activeFilters = {initial_filters};
-var _FILTERS_STORAGE_KEY = 'cch_active_filters';
-var _WINDOW_STATE_KEY = 'cch_state_v1';
 
 function _allFilterNames() {
     var chips = document.querySelectorAll('.filter-chip[data-filter]');
@@ -584,7 +582,7 @@ function _allFilterNames() {
     return names;
 }
 
-function _persistFilters() {
+function _sanitizeActiveFilters() {
     var allNames = _allFilterNames();
     var allSet = {};
     for (var i = 0; i < allNames.length; i++) {
@@ -598,70 +596,10 @@ function _persistFilters() {
         }
     }
     _activeFilters = sanitized;
-
-    try {
-        var state = {};
-        if (window.name) {
-            state = JSON.parse(window.name);
-        }
-        if (!state || typeof state !== 'object') {
-            state = {};
-        }
-        state[_WINDOW_STATE_KEY] = { active_filters: sanitized };
-        window.name = JSON.stringify(state);
-    } catch (_e) {}
-
-    try {
-        sessionStorage.setItem(_FILTERS_STORAGE_KEY, JSON.stringify(sanitized));
-    } catch (_e) {}
-}
-
-function _restorePersistedFilters() {
-    var allowed = _allFilterNames();
-    var allowedSet = {};
-    for (var i = 0; i < allowed.length; i++) {
-        allowedSet[allowed[i]] = true;
-    }
-    function _sanitize(listLike) {
-        if (!Array.isArray(listLike)) return null;
-        var restored = [];
-        for (var i = 0; i < listLike.length; i++) {
-            var f = listLike[i];
-            if (typeof f === 'string' && allowedSet[f]) {
-                restored.push(f);
-            }
-        }
-        return restored;
-    }
-
-    try {
-        if (window.name) {
-            var state = JSON.parse(window.name);
-            if (state && typeof state === 'object') {
-                var payload = state[_WINDOW_STATE_KEY];
-                if (payload && typeof payload === 'object') {
-                    var fromWindowName = _sanitize(payload.active_filters);
-                    if (fromWindowName !== null) {
-                        _activeFilters = fromWindowName;
-                        return;
-                    }
-                }
-            }
-        }
-    } catch (_e) {}
-
-    try {
-        var raw = sessionStorage.getItem(_FILTERS_STORAGE_KEY);
-        if (!raw) return;
-        var parsed = JSON.parse(raw);
-        var fromSessionStorage = _sanitize(parsed);
-        if (fromSessionStorage !== null) {
-            _activeFilters = fromSessionStorage;
-        }
-    } catch (_e) {}
 }
 
 function syncFilterChips() {
+    _sanitizeActiveFilters();
     var chips = document.querySelectorAll('.filter-chip');
     for (var i = 0; i < chips.length; i++) {
         var chip = chips[i];
@@ -687,7 +625,6 @@ function toggleFilter(name) {
         _activeFilters.push(name);
     }
     syncFilterChips();
-    _persistFilters();
     applyFilters(true);
 }
 
@@ -856,7 +793,6 @@ function focusMessageByUuid(messageUuid) {
             }
         }
         syncFilterChips();
-        _persistFilters();
     }
 
     var searchInput = document.querySelector('.search-input');
@@ -1023,10 +959,8 @@ function scrollToBottom() {
 }
 
 /* ── Initial render state ── */
-_restorePersistedFilters();
 syncFilterChips();
 applyFilters(true);
-_persistFilters();
 requestAnimationFrame(function() {
     document.body.classList.remove('preinit');
 });

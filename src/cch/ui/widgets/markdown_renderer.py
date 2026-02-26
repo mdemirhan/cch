@@ -6,13 +6,11 @@ import markdown
 
 from cch.ui.theme import COLORS, MONO_FAMILY
 
-_MD = markdown.Markdown(extensions=["fenced_code", "tables", "nl2br"])
-
 
 def render_markdown(text: str) -> str:
     """Convert markdown text to styled HTML for QTextBrowser."""
-    _MD.reset()
-    body = _MD.convert(text)
+    parser = markdown.Markdown(extensions=["fenced_code", "tables", "nl2br"])
+    body = parser.convert(text)
     return _wrap_html(body)
 
 

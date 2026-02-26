@@ -83,7 +83,7 @@ class SessionService:
         self,
         session_id: str,
         *,
-        limit: int | None = None,
+        limit: int | None = 1000,
         offset: int = 0,
     ) -> Result[SessionDetail, str]:
         """Get full session detail with messages.
@@ -161,6 +161,7 @@ class SessionService:
                 timestamp=m["timestamp"] or "",
                 is_sidechain=bool(m["is_sidechain"]),
                 sequence_num=m["sequence_num"] or 0,
+                category_mask=m["category_mask"] or 0,
                 tool_calls=tc_by_msg.get(m["uuid"], []),
             )
             for m in msg_rows
@@ -193,6 +194,22 @@ class SessionService:
                 messages=messages,
             )
         )
+
+    async def get_message_offset(self, session_id: str, message_uuid: str) -> int | None:
+        """Return the 0-based sequence offset for a message within a session."""
+        if not message_uuid:
+            return None
+        row = await self._db.fetch_one(
+            """SELECT sequence_num
+               FROM messages
+               WHERE session_id = ? AND uuid = ?
+               ORDER BY sequence_num
+               LIMIT 1""",
+            (session_id, message_uuid),
+        )
+        if row is None:
+            return None
+        return int(row["sequence_num"] or 0)
 
     async def get_recent_sessions(self, limit: int = 10) -> Result[list[SessionSummary], str]:
         """Get most recently modified sessions."""

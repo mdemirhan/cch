@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 from result import Ok
 
 from cch.services.container import ServiceContainer
-from cch.ui.async_bridge import async_slot, create_event_loop, schedule
+from cch.ui.async_bridge import async_slot, cancel_all_tasks, create_event_loop, schedule
 from cch.ui.panels.content_panel import ContentPanel
 from cch.ui.panels.detail_list_panel import DetailListPanel
 from cch.ui.panels.list_panel import ListPanel
@@ -88,6 +88,8 @@ class CCHMainWindow(QMainWindow):
         self._status_label = QLabel("Loading...")
         self._status_bar.addWidget(self._status_label)
         self._shutdown_in_progress = False
+        self._project_request_generation = 0
+        self._session_request_generation = 0
         self._force_exit_timer = QTimer(self)
         self._force_exit_timer.setSingleShot(True)
         self._force_exit_timer.timeout.connect(lambda: os._exit(0))
@@ -132,9 +134,13 @@ class CCHMainWindow(QMainWindow):
         """Load sessions for the selected project."""
         if not self._services:
             return
+        self._project_request_generation += 1
+        generation = self._project_request_generation
         result = await self._services.session_service.list_sessions(
             project_id=project_id, limit=200, sort_by="modified_at", sort_order="desc"
         )
+        if generation != self._project_request_generation:
+            return
         if isinstance(result, Ok):
             sessions, _total = result.ok_value
             self._detail_panel.set_sessions(sessions)
@@ -144,7 +150,23 @@ class CCHMainWindow(QMainWindow):
         """Load full session detail and display in content panel."""
         if not self._services:
             return
-        result = await self._services.session_service.get_session_detail(session_id)
+        self._session_request_generation += 1
+        generation = self._session_request_generation
+        offset = 0
+        if message_uuid:
+            msg_offset = await self._services.session_service.get_message_offset(
+                session_id,
+                message_uuid,
+            )
+            if msg_offset is not None:
+                offset = max(0, msg_offset - 200)
+        result = await self._services.session_service.get_session_detail(
+            session_id,
+            limit=1200,
+            offset=offset,
+        )
+        if generation != self._session_request_generation:
+            return
         if isinstance(result, Ok):
             self._content_panel.show_session(
                 result.ok_value,
@@ -213,6 +235,7 @@ class CCHMainWindow(QMainWindow):
 
         if self._services is None:
             event.accept()
+            self._content_panel.dispose()
             app = QApplication.instance()
             if app is not None:
                 app.quit()
@@ -223,17 +246,21 @@ class CCHMainWindow(QMainWindow):
         self._status_label.setText("Shutting down...")
 
         # Fallback for known QtWebEngine teardown hangs.
-        self._force_exit_timer.start(1500)
+        self._force_exit_timer.start(2500)
         schedule(self._shutdown_and_quit())
 
     async def _shutdown_and_quit(self) -> None:
         """Best-effort cleanup before quitting the Qt app."""
         try:
+            cancel_all_tasks()
+            self._content_panel.dispose()
             if self._services is not None:
                 await self._services.close()
+                self._services = None
         except Exception:
             logger.exception("Error while shutting down services")
         finally:
+            self._force_exit_timer.stop()
             app = QApplication.instance()
             if app is not None:
                 app.quit()

@@ -58,6 +58,7 @@ class MessageView(BaseModel):
     timestamp: str = ""
     is_sidechain: bool = False
     sequence_num: int = 0
+    category_mask: int = 0
     tool_calls: list[ToolCallView] = Field(default_factory=list)
 
 

@@ -54,6 +54,15 @@ class TestSessionService:
         assert len(detail.messages) == 2
 
     @pytest.mark.asyncio
+    async def test_get_message_offset(self, indexed_db: Database) -> None:
+        svc = SessionService(indexed_db)
+        detail_result = await svc.get_session_detail("test-session-001", limit=1, offset=0)
+        assert isinstance(detail_result, Ok)
+        first_uuid = detail_result.ok_value.messages[0].uuid
+        offset = await svc.get_message_offset("test-session-001", first_uuid)
+        assert offset == 0
+
+    @pytest.mark.asyncio
     async def test_get_session_not_found(self, indexed_db: Database) -> None:
         svc = SessionService(indexed_db)
         result = await svc.get_session_detail("nonexistent")

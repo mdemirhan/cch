@@ -59,8 +59,6 @@ class _CodexMeta:
     created: str = ""
     modified: str = ""
     git_branch: str = ""
-    first_prompt: str = ""
-    message_count: int = 0
 
 
 def _decode_project_id(project_id: str) -> str:
@@ -144,13 +142,8 @@ def discover_projects(config: Config) -> list[DiscoveredProject]:
     return projects
 
 
-def discover_sessions(
-    config: Config,
-    projects: list[DiscoveredProject] | None = None,  # kept for backward compatibility
-) -> list[DiscoveredSession]:
+def discover_sessions(config: Config) -> list[DiscoveredSession]:
     """Discover all session files from Claude, Codex and Gemini stores."""
-    del projects  # no longer needed now that discovery is provider-native
-
     sessions: list[DiscoveredSession] = []
     sessions.extend(_discover_claude_sessions(config))
     sessions.extend(_discover_codex_sessions(config))
@@ -244,8 +237,8 @@ def _discover_codex_sessions(config: Config) -> list[DiscoveredSession]:
                 project_name=project_name,
                 mtime_ms=int(stat.st_mtime * 1000),
                 file_size=stat.st_size,
-                first_prompt=metadata.first_prompt,
-                message_count=metadata.message_count,
+                first_prompt="",
+                message_count=0,
                 created=metadata.created,
                 modified=metadata.modified,
                 git_branch=metadata.git_branch,
@@ -287,22 +280,6 @@ def _discover_gemini_sessions(config: Config) -> list[DiscoveredSession]:
         project_fallback = project_hash or session_path.parent.parent.parent.name or "unknown"
         project_id = _provider_project_id(_GEMINI, project_path, fallback=project_fallback)
 
-        first_prompt = ""
-        summary = ""
-        message_count = 0
-        messages = payload.get("messages")
-        if isinstance(messages, list):
-            for message in messages:
-                if not isinstance(message, dict):
-                    continue
-                msg_type = str(message.get("type", "")).strip().lower()
-                if msg_type in {"user", "gemini", "assistant", "info"}:
-                    message_count += 1
-                if not first_prompt and msg_type == "user":
-                    first_prompt = _extract_gemini_text(message.get("content"))[:500]
-                if not summary and msg_type in {"gemini", "assistant"}:
-                    summary = _extract_gemini_text(message.get("content"))[:500]
-
         sessions.append(
             DiscoveredSession(
                 session_id=_provider_session_id(
@@ -318,9 +295,9 @@ def _discover_gemini_sessions(config: Config) -> list[DiscoveredSession]:
                 project_name=project_name,
                 mtime_ms=int(stat.st_mtime * 1000),
                 file_size=stat.st_size,
-                first_prompt=first_prompt,
-                summary=summary,
-                message_count=message_count,
+                first_prompt="",
+                summary="",
+                message_count=0,
                 created=str(payload.get("startTime", "")),
                 modified=str(payload.get("lastUpdated", "")),
             )
@@ -332,7 +309,7 @@ def _discover_gemini_sessions(config: Config) -> list[DiscoveredSession]:
 def _scan_codex_metadata(path: Path) -> _CodexMeta:
     """Scan key metadata from a Codex JSONL session without full parse."""
     meta = _CodexMeta()
-    max_lines = 600
+    max_lines = 120
 
     try:
         with open(path, encoding="utf-8") as file:
@@ -370,73 +347,12 @@ def _scan_codex_metadata(path: Path) -> _CodexMeta:
                         branch = git_payload.get("branch")
                         if isinstance(branch, str):
                             meta.git_branch = branch
-                    continue
-
-                if msg_type != "response_item":
-                    continue
-
-                payload = raw.get("payload")
-                if not isinstance(payload, dict):
-                    continue
-
-                payload_type = str(payload.get("type", "")).strip()
-                if payload_type == "message":
-                    role = str(payload.get("role", "")).strip()
-                    if role in {"user", "assistant"}:
-                        meta.message_count += 1
-                    if role == "user" and not meta.first_prompt:
-                        prompt = _extract_codex_message_text(payload.get("content"))
-                        if prompt and "<environment_context>" not in prompt:
-                            meta.first_prompt = prompt[:500]
-                elif payload_type in {"function_call", "function_call_output", "reasoning"}:
-                    meta.message_count += 1
+                    if meta.source_session_id and meta.project_path:
+                        break
     except OSError:
         logger.warning("Failed to read Codex session metadata from %s", path)
 
     return meta
-
-
-def _extract_codex_message_text(content: object) -> str:
-    """Extract a textual message from Codex content arrays."""
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-
-    parts: list[str] = []
-    for block in content:
-        if isinstance(block, str):
-            parts.append(block)
-            continue
-        if not isinstance(block, dict):
-            continue
-        text = block.get("text")
-        if isinstance(text, str) and text:
-            parts.append(text)
-    return "\n".join(parts)
-
-
-def _extract_gemini_text(content: object) -> str:
-    """Extract textual content from Gemini message payloads."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-                continue
-            if not isinstance(block, dict):
-                continue
-            text = block.get("text")
-            if isinstance(text, str) and text:
-                parts.append(text)
-        return "\n".join(parts)
-    if isinstance(content, dict):
-        text = content.get("text")
-        if isinstance(text, str):
-            return text
-    return ""
 
 
 def _load_sessions_index(project_dir: Path) -> dict[str, dict[str, object]]:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+
 import pytest
 
 from cch.config import Config
@@ -88,3 +90,24 @@ class TestIndexer:
 
         await indexer.index_all(progress_callback=on_progress)
         assert len(progress_calls) >= 1
+
+    @pytest.mark.asyncio
+    async def test_duplicate_message_uuid_across_sessions_is_preserved(
+        self,
+        test_db: Database,
+        test_config: Config,
+    ) -> None:
+        """Same UUID in different sessions should not overwrite previous rows."""
+        src = test_config.projects_dir / "-tmp-test-project" / "test-session-001.jsonl"
+        extra_project = test_config.projects_dir / "-tmp-test-project-copy"
+        extra_project.mkdir(parents=True, exist_ok=True)
+        dst = extra_project / "test-session-002.jsonl"
+        shutil.copy(src, dst)
+
+        indexer = Indexer(test_db, test_config)
+        await indexer.index_all(force=True)
+
+        session_row = await test_db.fetch_one("SELECT COUNT(*) as cnt FROM sessions")
+        message_row = await test_db.fetch_one("SELECT COUNT(*) as cnt FROM messages")
+        assert session_row is not None and session_row["cnt"] >= 2
+        assert message_row is not None and message_row["cnt"] >= 10

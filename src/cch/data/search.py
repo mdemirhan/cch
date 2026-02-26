@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from cch.models.categories import category_mask_for_keys
 from cch.models.search import SearchResult, SearchResults
 
 if TYPE_CHECKING:
@@ -49,55 +50,10 @@ class SearchEngine:
         params: list[str | int] = [fts_query]
 
         if roles:
-            role_clauses: list[str] = []
-            for r in roles:
-                if r == "user":
-                    role_clauses.append(
-                        "m.role = 'user' AND m.type = 'user' AND "
-                        "TRIM(COALESCE(m.content_text, '')) != '' AND "
-                        "EXISTS ("
-                        "  SELECT 1 FROM json_each(m.content_json) j "
-                        "  WHERE json_extract(j.value, '$.type') = 'text'"
-                        ")"
-                    )
-                elif r == "assistant":
-                    role_clauses.append(
-                        "m.role = 'assistant' AND EXISTS ("
-                        "  SELECT 1 FROM json_each(m.content_json) j "
-                        "  WHERE json_extract(j.value, '$.type') = 'text' "
-                        "    AND TRIM(COALESCE(json_extract(j.value, '$.text'), '')) != ''"
-                        ")"
-                    )
-                elif r == "tool_call":
-                    role_clauses.append(
-                        "m.role = 'assistant' AND ("
-                        "EXISTS ("
-                        "  SELECT 1 FROM json_each(m.content_json) j "
-                        "  WHERE json_extract(j.value, '$.type') = 'tool_use'"
-                        ") OR "
-                        "EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.message_uuid = m.uuid)"
-                        ")"
-                    )
-                elif r == "thinking":
-                    role_clauses.append(
-                        "m.role = 'assistant' AND EXISTS ("
-                        "  SELECT 1 FROM json_each(m.content_json) j "
-                        "  WHERE json_extract(j.value, '$.type') = 'thinking' "
-                        "    AND TRIM(COALESCE(json_extract(j.value, '$.text'), '')) != ''"
-                        ")"
-                    )
-                elif r == "tool_result":
-                    role_clauses.append(
-                        "m.role = 'user' AND m.type = 'user' AND "
-                        "EXISTS ("
-                        "  SELECT 1 FROM json_each(m.content_json) j "
-                        "  WHERE json_extract(j.value, '$.type') = 'tool_result'"
-                        ")"
-                    )
-                elif r == "system":
-                    role_clauses.append("m.type IN ('system', 'summary')")
-            if role_clauses:
-                conditions.append("(" + " OR ".join(role_clauses) + ")")
+            category_mask = category_mask_for_keys(roles)
+            if category_mask:
+                conditions.append("(m.category_mask & ?) != 0")
+                params.append(category_mask)
 
         if project_ids:
             normalized_ids = [pid for pid in project_ids if pid]
@@ -117,7 +73,7 @@ class SearchEngine:
         count_sql = f"""
             SELECT COUNT(*) as cnt
             FROM messages_fts f
-            JOIN messages m ON m.rowid = f.rowid
+            JOIN messages m ON m.id = f.rowid
             JOIN sessions s ON s.session_id = m.session_id
             WHERE messages_fts MATCH ?
             {where_clause}
@@ -137,7 +93,7 @@ class SearchEngine:
                 p.project_name,
                 COALESCE(s.provider, p.provider, 'claude') as provider
             FROM messages_fts f
-            JOIN messages m ON m.rowid = f.rowid
+            JOIN messages m ON m.id = f.rowid
             JOIN sessions s ON s.session_id = m.session_id
             LEFT JOIN projects p ON p.project_id = s.project_id
             WHERE messages_fts MATCH ?

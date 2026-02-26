@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 
 from cch.data.discovery import DiscoveredSession, discover_sessions
 from cch.data.parser import parse_session_file
-from cch.data.protocols import IndexResult
+from cch.models.categories import category_mask_for_message
+from cch.models.indexing import IndexResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 type ProgressCallback = Callable[[int, int, str], None]
+_BATCH_SIZE = 300
 
 
 class Indexer:
@@ -115,36 +117,18 @@ class Indexer:
         savepoint = f"session_{savepoint_id}"
         await self._db.execute(f"SAVEPOINT {savepoint}")
         try:
-            # Delete any existing session rows for this file path first, then the target ID.
+            # Clean previous rows. CASCADE handles messages/tool_calls.
             existing_for_path = await self._db.fetch_all(
                 "SELECT session_id FROM sessions WHERE file_path = ?",
                 (str(session.file_path),),
             )
-            for row in existing_for_path:
-                old_session_id = row["session_id"]
-                await self._db.execute(
-                    "DELETE FROM tool_calls WHERE session_id = ?",
-                    (old_session_id,),
-                )
-                await self._db.execute(
-                    "DELETE FROM messages WHERE session_id = ?",
-                    (old_session_id,),
-                )
+            old_session_ids = {str(row["session_id"]) for row in existing_for_path}
+            old_session_ids.add(session.session_id)
+            for old_session_id in old_session_ids:
                 await self._db.execute(
                     "DELETE FROM sessions WHERE session_id = ?",
                     (old_session_id,),
                 )
-
-            # Ensure target session id is clean as well.
-            await self._db.execute(
-                "DELETE FROM tool_calls WHERE session_id = ?", (session.session_id,)
-            )
-            await self._db.execute(
-                "DELETE FROM messages WHERE session_id = ?", (session.session_id,)
-            )
-            await self._db.execute(
-                "DELETE FROM sessions WHERE session_id = ?", (session.session_id,)
-            )
 
             message_count = 0
             user_count = 0
@@ -162,6 +146,40 @@ class Indexer:
             summary = session.summary
             message_rows: list[tuple[object, ...]] = []
             tool_call_rows: list[tuple[object, ...]] = []
+
+            created_at = session.created or ""
+            modified_at = session.modified or created_at
+            if not created_at:
+                created_at = datetime.fromtimestamp(
+                    session.mtime_ms / 1000,
+                    tz=UTC,
+                ).isoformat()
+            if not modified_at:
+                modified_at = created_at
+
+            # Insert shell session first so child message rows can stream in.
+            await self._db.execute(
+                """INSERT INTO sessions
+                (session_id, project_id, provider, file_path, first_prompt, summary,
+                 message_count, user_message_count, assistant_message_count, tool_call_count,
+                 total_input_tokens, total_output_tokens,
+                 total_cache_read_tokens, total_cache_creation_tokens,
+                 model, models_used, git_branch, cwd,
+                 created_at, modified_at, duration_ms, is_sidechain)
+                VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, '', '', ?, '', ?, ?, 0, ?)""",
+                (
+                    session.session_id,
+                    session.project_id,
+                    session.provider,
+                    str(session.file_path),
+                    first_prompt,
+                    summary,
+                    session.git_branch,
+                    created_at,
+                    modified_at,
+                    1 if session.is_sidechain else 0,
+                ),
+            )
 
             for msg in parse_session_file(
                 session.file_path,
@@ -202,10 +220,17 @@ class Indexer:
                     [b.model_dump() for b in msg.content_blocks],
                     default=str,
                 )
+                category_mask = category_mask_for_message(
+                    msg_type=msg.type,
+                    role=msg.role,
+                    content_blocks=msg.content_blocks,
+                    content_text=msg.content_text,
+                    has_tool_calls=False,
+                )
                 message_rows.append(
                     (
-                        msg.uuid,
                         session.session_id,
+                        msg.uuid,
                         msg.parent_uuid,
                         msg.type,
                         msg.role,
@@ -219,6 +244,7 @@ class Indexer:
                         msg.timestamp,
                         1 if msg.is_sidechain else 0,
                         msg.sequence_num,
+                        category_mask,
                     )
                 )
 
@@ -230,14 +256,23 @@ class Indexer:
                         tool_call_count += 1
                         tool_call_rows.append(
                             (
-                                tool_use_id,
-                                msg.uuid,
                                 session.session_id,
+                                msg.uuid,
+                                tool_use_id,
                                 block.tool_use.name,
                                 block.tool_use.input_json,
                                 msg.timestamp,
                             )
                         )
+                if len(message_rows) >= _BATCH_SIZE:
+                    await self._flush_message_rows(message_rows)
+                    message_rows.clear()
+                if len(tool_call_rows) >= _BATCH_SIZE:
+                    if message_rows:
+                        await self._flush_message_rows(message_rows)
+                        message_rows.clear()
+                    await self._flush_tool_call_rows(tool_call_rows)
+                    tool_call_rows.clear()
 
             # Calculate duration
             duration_ms = 0
@@ -249,24 +284,26 @@ class Indexer:
                 except ValueError:
                     pass
 
-            created_at = session.created or first_timestamp or ""
-            modified_at = session.modified or last_timestamp or ""
+            created_at = session.created or first_timestamp or created_at
+            modified_at = session.modified or last_timestamp or modified_at
 
-            # Insert session
+            if message_rows:
+                await self._flush_message_rows(message_rows)
+            if tool_call_rows:
+                await self._flush_tool_call_rows(tool_call_rows)
+
+            # Finalize session aggregate counters.
             await self._db.execute(
-                """INSERT OR REPLACE INTO sessions
-                (session_id, project_id, provider, file_path, first_prompt, summary,
-                 message_count, user_message_count, assistant_message_count, tool_call_count,
-                 total_input_tokens, total_output_tokens,
-                 total_cache_read_tokens, total_cache_creation_tokens,
-                 model, models_used, git_branch, cwd,
-                 created_at, modified_at, duration_ms, is_sidechain)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """UPDATE sessions
+                   SET first_prompt = ?, summary = ?,
+                       message_count = ?, user_message_count = ?,
+                       assistant_message_count = ?, tool_call_count = ?,
+                       total_input_tokens = ?, total_output_tokens = ?,
+                       total_cache_read_tokens = ?, total_cache_creation_tokens = ?,
+                       model = ?, models_used = ?, git_branch = ?,
+                       created_at = ?, modified_at = ?, duration_ms = ?, is_sidechain = ?
+                   WHERE session_id = ?""",
                 (
-                    session.session_id,
-                    session.project_id,
-                    session.provider,
-                    str(session.file_path),
                     first_prompt,
                     summary,
                     message_count,
@@ -280,32 +317,13 @@ class Indexer:
                     primary_model,
                     ",".join(sorted(models_used)),
                     session.git_branch,
-                    "",
                     created_at,
                     modified_at,
                     duration_ms,
                     1 if session.is_sidechain else 0,
+                    session.session_id,
                 ),
             )
-
-            if message_rows:
-                await self._db.execute_many(
-                    """INSERT OR REPLACE INTO messages
-                    (uuid, session_id, parent_uuid, type, role, model,
-                     content_text, content_json,
-                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                     timestamp, is_sidechain, sequence_num)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    message_rows,
-                )
-
-            if tool_call_rows:
-                await self._db.execute_many(
-                    """INSERT OR REPLACE INTO tool_calls
-                    (tool_use_id, message_uuid, session_id, tool_name, input_json, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?)""",
-                    tool_call_rows,
-                )
 
             # Record indexed file
             now = datetime.now(UTC).isoformat()
@@ -321,6 +339,25 @@ class Indexer:
             await self._db.execute(f"ROLLBACK TO {savepoint}")
             await self._db.execute(f"RELEASE {savepoint}")
             raise
+
+    async def _flush_message_rows(self, rows: list[tuple[object, ...]]) -> None:
+        await self._db.execute_many(
+            """INSERT OR REPLACE INTO messages
+            (session_id, uuid, parent_uuid, type, role, model,
+             content_text, content_json,
+             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+             timestamp, is_sidechain, sequence_num, category_mask)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+
+    async def _flush_tool_call_rows(self, rows: list[tuple[object, ...]]) -> None:
+        await self._db.execute_many(
+            """INSERT OR REPLACE INTO tool_calls
+            (session_id, message_uuid, tool_use_id, tool_name, input_json, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
 
     async def _upsert_project(
         self,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from html import escape
 
+from cch.models.categories import category_keys_from_mask, category_mask_for_message
 from cch.models.sessions import MessageView
 from cch.ui.theme import MONO_FAMILY, format_tokens
 from cch.ui.widgets.markdown_renderer import render_markdown
@@ -28,40 +29,17 @@ def classify_message(
     content_blocks: list[dict[str, object]] | None = None,
 ) -> set[str]:
     """Return the set of content categories present in a message."""
-    categories: set[str] = set()
     blocks = (
         content_blocks if content_blocks is not None else _parse_content_json(msg.content_json)
     )
-
-    if msg.type in ("summary", "system"):
-        categories.add("system")
-        return categories
-
-    if msg.role == "user" and msg.type == "user":
-        has_text = any(b.get("type") == "text" for b in blocks)
-        is_tool_result = any(b.get("type") == "tool_result" for b in blocks)
-
-        if is_tool_result:
-            categories.add("tool_result")
-        if has_text and msg.content_text.strip():
-            categories.add("user")
-
-    elif msg.role == "assistant":
-        for block in blocks:
-            match block.get("type"):
-                case "text":
-                    if str(block.get("text", "")).strip():
-                        categories.add("assistant")
-                case "thinking":
-                    if str(block.get("text", "")).strip():
-                        categories.add("thinking")
-                case "tool_use":
-                    categories.add("tool_call")
-
-        if msg.tool_calls:
-            categories.add("tool_call")
-
-    return categories
+    mask = category_mask_for_message(
+        msg_type=msg.type,
+        role=msg.role,
+        content_blocks=blocks,
+        content_text=msg.content_text,
+        has_tool_calls=bool(msg.tool_calls),
+    )
+    return set(category_keys_from_mask(mask))
 
 
 def render_message_html(msg: MessageView) -> str:
@@ -85,7 +63,7 @@ def render_message_html(msg: MessageView) -> str:
     if msg.role == "assistant":
         return _render_assistant(msg, categories, content_blocks)
 
-    return ""
+    return _render_unknown(msg, categories)
 
 
 # ── Private renderers ──
@@ -144,7 +122,7 @@ def _render_assistant(
         has_tool_use = True
 
     if not has_text and not has_thinking and not has_tool_use:
-        return ""
+        return _render_unknown(msg, categories)
 
     # Tool-call-only messages: compact card without "Assistant" header
     has_content = has_text or has_thinking
@@ -339,4 +317,29 @@ def _empty_placeholder(text: str) -> str:
     return (
         f'<p style="color:#9AA3AA;font-size:12px;font-style:italic;'
         f'margin:0 0 4px 0;">{escape(text)}</p>'
+    )
+
+
+def _render_unknown(msg: MessageView, categories: set[str]) -> str:
+    """Render a minimal card for unsupported/empty message structures."""
+    role_label = "Assistant"
+    cls = "assistant"
+    if msg.type in ("summary", "system") or msg.role == "system":
+        role_label = "System"
+        cls = "system"
+    elif msg.role == "user":
+        role_label = "You"
+        cls = "user"
+    timestamp = msg.timestamp[:19] if msg.timestamp else ""
+    text = msg.content_text.strip()[:2000]
+    body = _empty_placeholder("(unsupported or empty message)")
+    if text:
+        body += _extract_body(render_markdown(text))
+
+    return (
+        f"<div {_message_attrs(msg, categories, cls)}>"
+        f'<div class="msg-header">'
+        f'<span class="role-badge {cls}">{role_label}</span>'
+        f'<span class="timestamp">{timestamp}</span>'
+        f"</div>{body}</div>"
     )
