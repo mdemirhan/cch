@@ -89,11 +89,12 @@ class CCHMainWindow(QMainWindow):
         # ── Status bar ──
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
-        self._status_label = QLabel("Loading...")
-        self._status_bar.addWidget(self._status_label)
+        self._status_label = QLabel("Ready")
+        self._status_label.setStyleSheet("color: #5A6570;")
+        self._status_bar.addWidget(self._status_label, 1)
         self._copy_session_ref_btn = QPushButton("Copy")
         self._copy_session_ref_btn.setFixedHeight(20)
-        self._copy_session_ref_btn.setToolTip("Copy selected project name and session id")
+        self._copy_session_ref_btn.setToolTip("Copy selected project/session paths")
         self._copy_session_ref_btn.setEnabled(False)
         self._copy_session_ref_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._copy_session_ref_btn.setStyleSheet(
@@ -120,9 +121,13 @@ class CCHMainWindow(QMainWindow):
         self._session_request_generation = 0
         self._selected_project_id = ""
         self._selected_project_name = ""
+        self._selected_project_path = ""
         self._active_session_id = ""
+        self._active_session_provider = ""
         self._active_session_file_path = ""
+        self._active_session_cwd = ""
         self._project_names_by_id: dict[str, str] = {}
+        self._project_paths_by_id: dict[str, str] = {}
         self._refresh_in_progress = False
         self._current_nav = "history"
         self._focus_controller = SessionFocusController(
@@ -146,6 +151,7 @@ class CCHMainWindow(QMainWindow):
         self._detail_panel.session_selected.connect(self._on_session_selected)
         self._content_panel.session_requested.connect(self._on_session_selected)
         self._sidebar.set_pane_collapsed(False)
+        self._status_label.setText(self._status_default_text)
         self._update_status_context()
 
         # ── Keyboard shortcuts ──
@@ -222,21 +228,21 @@ class CCHMainWindow(QMainWindow):
         if self._current_nav != "history" or not self._content_panel.is_history_active():
             return
         factor = self._content_panel.zoom_in_session()
-        self._status_bar.showMessage(f"Zoom: {factor:.0%}", 1200)
+        self._show_transient_status(f"Zoom: {factor:.0%}", 1200)
 
     def _zoom_out_session(self) -> None:
         """Decrease session detail zoom when history view is active."""
         if self._current_nav != "history" or not self._content_panel.is_history_active():
             return
         factor = self._content_panel.zoom_out_session()
-        self._status_bar.showMessage(f"Zoom: {factor:.0%}", 1200)
+        self._show_transient_status(f"Zoom: {factor:.0%}", 1200)
 
     def _reset_session_zoom(self) -> None:
         """Reset session detail zoom when history view is active."""
         if self._current_nav != "history" or not self._content_panel.is_history_active():
             return
         factor = self._content_panel.reset_session_zoom()
-        self._status_bar.showMessage(f"Zoom: {factor:.0%}", 1200)
+        self._show_transient_status(f"Zoom: {factor:.0%}", 1200)
 
     def _show_shortcuts_dialog(self) -> None:
         """Show keyboard shortcuts help."""
@@ -262,8 +268,11 @@ class CCHMainWindow(QMainWindow):
         """Load sessions for the selected project."""
         self._selected_project_id = project_id
         self._selected_project_name = self._project_names_by_id.get(project_id, "")
+        self._selected_project_path = self._project_paths_by_id.get(project_id, "")
         self._active_session_id = ""
+        self._active_session_provider = ""
         self._active_session_file_path = ""
+        self._active_session_cwd = ""
         self._update_status_context()
         await self._load_project_sessions(project_id)
 
@@ -306,7 +315,14 @@ class CCHMainWindow(QMainWindow):
             self._selected_project_id = detail.project_id or self._selected_project_id
             if detail.project_name:
                 self._selected_project_name = detail.project_name
+            if self._selected_project_id:
+                self._selected_project_path = self._project_paths_by_id.get(
+                    self._selected_project_id,
+                    self._selected_project_path,
+                )
+            self._active_session_provider = detail.provider
             self._active_session_file_path = detail.file_path
+            self._active_session_cwd = detail.cwd
             self._update_status_context()
             self._content_panel.show_session(
                 detail,
@@ -325,7 +341,7 @@ class CCHMainWindow(QMainWindow):
             ),
         )
         logger.info("Indexing complete: %s", result)
-        self._status_bar.showMessage(
+        self._show_transient_status(
             f"{label} complete: {result.files_indexed} indexed, "
             f"{result.files_skipped} skipped, {result.files_failed} failed",
             3500,
@@ -368,7 +384,7 @@ class CCHMainWindow(QMainWindow):
                 await self._load_session_detail(selected_session_id)
         except Exception:
             logger.exception("Refresh failed")
-            self._status_bar.showMessage("Refresh failed. Check terminal logs.", 4000)
+            self._show_transient_status("Refresh failed. Check terminal logs.", 4000)
         finally:
             self._refresh_in_progress = False
             self._sidebar.set_refresh_busy(False)
@@ -407,14 +423,20 @@ class CCHMainWindow(QMainWindow):
             self._project_names_by_id = {
                 project.project_id: project.project_name for project in projects
             }
+            self._project_paths_by_id = {
+                project.project_id: project.project_path for project in projects
+            }
             if (
                 self._selected_project_id
                 and self._selected_project_id not in self._project_names_by_id
             ):
                 self._selected_project_id = ""
                 self._selected_project_name = ""
+                self._selected_project_path = ""
                 self._active_session_id = ""
+                self._active_session_provider = ""
                 self._active_session_file_path = ""
+                self._active_session_cwd = ""
             self._update_status_context()
 
     def _update_status_context(self) -> None:
@@ -432,20 +454,36 @@ class CCHMainWindow(QMainWindow):
         self._copy_session_ref_btn.setEnabled(has_selection)
 
     def _copy_session_reference(self) -> None:
-        """Copy selected project, session id, and session file path."""
+        """Copy selected project/session identifiers and absolute paths."""
         if not self._active_session_id:
             return
         if not self._active_session_file_path:
             return
         project_label = self._selected_project_name or self._selected_project_id or "Unknown"
+        project_folder_path = _to_abs_path(self._selected_project_path)
+        session_file_path = _to_abs_path(self._active_session_file_path)
+        provider_history_path = _session_history_folder_path(session_file_path)
         text = (
             f"Project: {project_label}\n"
             f"Session ID: {self._active_session_id}\n"
-            f"Session File: {self._active_session_file_path}"
+            f"Project Folder: {project_folder_path}\n"
+            f"Provider History Path: {provider_history_path}\n"
+            f"Session File: {session_file_path}"
         )
         clipboard = QApplication.clipboard()
         clipboard.setText(text)
-        self._status_bar.showMessage("Copied project/session/path reference", 1500)
+        self._show_transient_status("Copied project/session/path reference", 1500)
+
+    def _show_transient_status(self, text: str, timeout_ms: int) -> None:
+        """Show temporary status text, then restore the default context text."""
+        self._status_label.setText(text)
+
+        def _restore() -> None:
+            if self._refresh_in_progress or self._shutdown_in_progress:
+                return
+            self._status_label.setText(self._status_default_text)
+
+        QTimer.singleShot(timeout_ms, _restore)
 
     def _restore_state(self) -> None:
         """Restore window geometry and splitter positions from QSettings."""
@@ -531,3 +569,20 @@ def run_app(config: Config) -> None:
 
     with loop:
         loop.run_forever()
+
+
+def _to_abs_path(path: str) -> str:
+    """Return absolute path string when available."""
+    if not path:
+        return ""
+    return os.path.abspath(path)
+
+
+def _session_history_folder_path(session_file_path: str) -> str:
+    """Return the concrete history folder containing the selected session file."""
+    if not session_file_path:
+        return ""
+    parent = os.path.dirname(session_file_path)
+    if not parent:
+        return ""
+    return os.path.join(parent, "")
