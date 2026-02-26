@@ -60,15 +60,15 @@ def test_unknown_message_is_rendered_as_placeholder() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_detail_default_limit_window(test_db: Database) -> None:
+async def test_session_detail_default_limit_window(in_memory_db: Database) -> None:
     session_id = "s-large"
-    await test_db.execute(
+    await in_memory_db.execute(
         """INSERT INTO projects
            (project_id, provider, project_path, project_name, session_count)
            VALUES (?, ?, ?, ?, 1)""",
         ("p-large", "claude", "/tmp/large", "large"),
     )
-    await test_db.execute(
+    await in_memory_db.execute(
         """INSERT INTO sessions
            (session_id, project_id, provider, file_path, first_prompt, summary,
             message_count, user_message_count, assistant_message_count, tool_call_count,
@@ -98,7 +98,7 @@ async def test_session_detail_default_limit_window(test_db: Database) -> None:
         )
         for idx in range(1500)
     ]
-    await test_db.execute_many(
+    await in_memory_db.execute_many(
         """INSERT INTO messages
            (session_id, uuid, parent_uuid, type, model,
             content_text, content_json,
@@ -107,9 +107,9 @@ async def test_session_detail_default_limit_window(test_db: Database) -> None:
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         message_rows,
     )
-    await test_db.commit()
+    await in_memory_db.commit()
 
-    svc = SessionService(test_db)
+    svc = SessionService(in_memory_db)
     result = await svc.get_session_detail(session_id)
     assert isinstance(result, Ok)
     assert result.ok_value.message_count == 1500

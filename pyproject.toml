@@ -53,3 +53,13 @@ select = ["E", "F", "I", "N", "UP", "B", "A", "SIM"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
 pythonPlatform = "All"
+
+[tool.coverage.run]
+source = ["src/cch"]
+omit = [
+    "src/cch/ui/*",
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

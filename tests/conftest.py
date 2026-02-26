@@ -14,6 +14,7 @@ from cch.data.db import Database
 
 SAMPLE_SESSION_PATH = Path(__file__).parent / "data" / "sample_session.jsonl"
 SAMPLE_INDEX_PATH = Path(__file__).parent / "data" / "sample_sessions_index.json"
+PROVIDER_DATA_ROOT = Path(__file__).parent / "data" / "providers"
 
 
 @pytest.fixture
@@ -62,3 +63,35 @@ async def test_db(tmp_path: Path) -> AsyncGenerator[Database]:
     await db.__aenter__()
     yield db  # type: ignore[misc]
     await db.__aexit__(None, None, None)
+
+
+@pytest.fixture
+async def in_memory_db() -> AsyncGenerator[Database]:
+    """SQLite in-memory database for fast unit/integration tests."""
+    db = Database(Path(":memory:"))
+    await db.__aenter__()
+    yield db  # type: ignore[misc]
+    await db.__aexit__(None, None, None)
+
+
+@pytest.fixture
+def provider_data_root() -> Path:
+    """Root path for anonymized provider fixture files."""
+    return PROVIDER_DATA_ROOT
+
+
+@pytest.fixture
+def provider_test_config(tmp_path: Path, provider_data_root: Path) -> Config:
+    """Config pointing to anonymized Claude/Codex/Gemini fixture trees."""
+    claude_dir = tmp_path / ".claude"
+    codex_dir = tmp_path / ".codex"
+    gemini_dir = tmp_path / ".gemini"
+    shutil.copytree(provider_data_root / "claude", claude_dir)
+    shutil.copytree(provider_data_root / "codex", codex_dir)
+    shutil.copytree(provider_data_root / "gemini", gemini_dir)
+    return Config(
+        claude_dir=claude_dir,
+        codex_dir=codex_dir,
+        gemini_dir=gemini_dir,
+        cache_dir=tmp_path / "cache",
+    )

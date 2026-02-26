@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
+from unittest.mock import patch
 
 from cch.config import Config
 from cch.data.discovery import (
+    _build_gemini_project_hash_map,
     _decode_project_id,
+    _encode_project_path,
+    _load_sessions_index,
     _project_name_from_path,
+    _provider_project_id,
+    _provider_session_id,
+    _read_text,
+    _safe_load_json,
+    _scan_codex_metadata,
     discover_projects,
     discover_sessions,
 )
@@ -68,3 +79,80 @@ class TestDiscoverSessions:
         session = sessions[0]
         assert session.first_prompt == "Hello, can you help me fix a bug in my Python code?"
         assert session.summary == "Fixed Python add function bug"
+
+
+class TestDiscoveryHelpers:
+    def test_encode_project_path(self) -> None:
+        assert _encode_project_path("/Users/redacted/demo") == "-Users-redacted-demo"
+        assert _encode_project_path("Users/redacted/demo/") == "-Users-redacted-demo"
+        assert _encode_project_path("   ") == ""
+
+    def test_provider_project_id(self) -> None:
+        assert _provider_project_id("claude", "/Users/a/demo") == "-Users-a-demo"
+        assert _provider_project_id("codex", "/Users/a/demo") == "codex:-Users-a-demo"
+        assert _provider_project_id("gemini", "", fallback="x") == "gemini:x"
+
+    def test_provider_session_id(self, tmp_path: Path) -> None:
+        assert _provider_session_id("claude", "abc") == "abc"
+        assert _provider_session_id("codex", "abc", file_path=None) == "codex:abc"
+        path = tmp_path / "s.jsonl"
+        path.write_text("{}", encoding="utf-8")
+        expected_suffix = hashlib.sha1(str(path).encode("utf-8")).hexdigest()[:8]
+        assert _provider_session_id("codex", "abc", file_path=path) == f"codex:abc:{expected_suffix}"
+
+    def test_scan_codex_metadata(self, provider_data_root: Path) -> None:
+        codex_path = (
+            provider_data_root
+            / "codex"
+            / "sessions"
+            / "2026"
+            / "02"
+            / "20"
+            / "codex-session-redacted-001.jsonl"
+        )
+        meta = _scan_codex_metadata(codex_path)
+        assert meta.source_session_id == "codex-session-redacted-001"
+        assert meta.project_path == "/Users/redacted/workspace/demo-codex"
+        assert meta.git_branch == "feature/testing"
+        assert meta.created == "2026-02-20T11:00:00.000Z"
+        assert meta.modified == "2026-02-20T11:00:00.000Z"
+
+    def test_scan_codex_metadata_handles_io_error(self) -> None:
+        with patch("builtins.open", side_effect=OSError("boom")):
+            meta = _scan_codex_metadata(Path("/tmp/none.jsonl"))
+        assert meta.source_session_id == ""
+        assert meta.project_path == ""
+
+    def test_load_sessions_index_missing_or_bad(self, tmp_path: Path) -> None:
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        assert _load_sessions_index(project_dir) == {}
+
+        (project_dir / "sessions-index.json").write_text("{bad-json", encoding="utf-8")
+        assert _load_sessions_index(project_dir) == {}
+
+        payload = {"entries": [{"sessionId": "a", "summary": "ok"}, {"oops": 1}]}
+        (project_dir / "sessions-index.json").write_text(json.dumps(payload), encoding="utf-8")
+        index = _load_sessions_index(project_dir)
+        assert index["a"]["summary"] == "ok"
+
+    def test_build_gemini_project_hash_map(self, provider_test_config: Config) -> None:
+        result = _build_gemini_project_hash_map(provider_test_config)
+        path = "/Users/redacted/workspace/demo-gemini"
+        digest = hashlib.sha256(path.encode("utf-8")).hexdigest()
+        assert result[digest] == path
+
+    def test_safe_load_json_and_read_text(self, tmp_path: Path) -> None:
+        file = tmp_path / "data.json"
+        file.write_text('{"a": 1}', encoding="utf-8")
+        assert _safe_load_json(file) == {"a": 1}
+
+        bad = tmp_path / "bad.json"
+        bad.write_text("{bad", encoding="utf-8")
+        assert _safe_load_json(bad) is None
+        assert _safe_load_json(tmp_path / "missing.json") is None
+
+        text = tmp_path / "x.txt"
+        text.write_text("hello", encoding="utf-8")
+        assert _read_text(text) == "hello"
+        assert _read_text(tmp_path / "nope.txt") == ""

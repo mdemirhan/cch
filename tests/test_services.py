@@ -17,11 +17,11 @@ from cch.services.session_service import SessionService
 
 
 @pytest.fixture
-async def indexed_db(test_db: Database, test_config: Config) -> Database:
+async def indexed_db(in_memory_db: Database, test_config: Config) -> Database:
     """Database with indexed test data."""
-    indexer = Indexer(test_db, test_config)
+    indexer = Indexer(in_memory_db, test_config)
     await indexer.index_all()
-    return test_db
+    return in_memory_db
 
 
 class TestSessionService:

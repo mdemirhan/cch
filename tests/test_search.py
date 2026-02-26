@@ -13,11 +13,11 @@ from cch.models.categories import ALL_CATEGORY_KEYS
 
 class TestSearchEngine:
     @pytest.fixture
-    async def indexed_db(self, test_db: Database, test_config: Config) -> Database:
+    async def indexed_db(self, in_memory_db: Database, test_config: Config) -> Database:
         """Database with indexed test data."""
-        indexer = Indexer(test_db, test_config)
+        indexer = Indexer(in_memory_db, test_config)
         await indexer.index_all()
-        return test_db
+        return in_memory_db
 
     @pytest.mark.asyncio
     async def test_basic_search(self, indexed_db: Database) -> None:
