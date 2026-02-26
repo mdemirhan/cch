@@ -58,7 +58,7 @@ class SearchResultModel(QAbstractListModel):
         if role == Qt.ItemDataRole.UserRole:
             return r.session_id
         if role == Qt.ItemDataRole.UserRole + 1:
-            return r.role
+            return r.message_type
         if role == Qt.ItemDataRole.UserRole + 2:
             return r.project_name
         if role == Qt.ItemDataRole.UserRole + 3:

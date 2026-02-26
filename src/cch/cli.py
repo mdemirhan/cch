@@ -60,18 +60,17 @@ def reindex(
         Path | None,
         typer.Option("--gemini-dir", help="Path to Gemini data directory"),
     ] = None,
-    force: Annotated[bool, typer.Option("--force", help="Force full re-index")] = False,
 ) -> None:
-    """Force rebuild the SQLite index."""
+    """Rebuild the SQLite index from scratch."""
     config = Config(
         claude_dir=claude_dir or Path.home() / ".claude",
         codex_dir=codex_dir or Path.home() / ".codex",
         gemini_dir=gemini_dir or Path.home() / ".gemini",
     )
-    asyncio.run(_do_reindex(config, force))
+    asyncio.run(_do_reindex(config))
 
 
-async def _do_reindex(config: Config, force: bool) -> None:
+async def _do_reindex(config: Config) -> None:
     """Run the reindex operation."""
     from cch.data.db import Database
     from cch.data.indexer import Indexer
@@ -87,6 +86,6 @@ async def _do_reindex(config: Config, force: bool) -> None:
         def progress(current: int, total: int, message: str) -> None:
             typer.echo(f"  [{current}/{total}] {message}")
 
-        result = await indexer.index_all(progress_callback=progress, force=force)
+        result = await indexer.index_all(progress_callback=progress, force=True)
 
     typer.echo(f"\nDone! {result}")

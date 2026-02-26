@@ -7,6 +7,7 @@ import logging
 from collections.abc import Generator
 from pathlib import Path
 
+from cch.models.categories import normalize_message_type
 from cch.models.messages import ContentBlock, ParsedMessage, TokenUsage, ToolUseBlock
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,16 @@ def parse_session_file(
     provider: str = "claude",
     session_id: str = "",
 ) -> Generator[ParsedMessage]:
-    """Stream-parse a provider session file and yield normalized messages."""
+    """Stream-parse a provider session file and yield canonical messages.
+
+    Canonical message types:
+      - user
+      - assistant
+      - tool_use
+      - tool_result
+      - thinking
+      - system
+    """
     normalized_provider = provider.strip().lower() or "claude"
     fallback_session = session_id or path.stem
 
@@ -44,25 +54,25 @@ def _parse_claude_session(path: Path, session_key: str) -> Generator[ParsedMessa
                 logger.warning("Invalid JSON at %s:%d", path, line_num)
                 continue
 
-            msg_type = raw.get("type", "")
+            msg_type = _as_str(raw.get("type"))
             match msg_type:
                 case "user" | "assistant":
-                    parsed = _parse_claude_conversation_message(raw, sequence)
-                    if parsed is None:
-                        continue
+                    parsed = _parse_claude_conversation_message(raw, sequence, session_key)
                 case "summary":
-                    parsed = _parse_summary_message(raw, sequence)
+                    parsed = _parse_summary_message(raw, sequence, session_key)
                 case "system":
-                    parsed = _parse_system_message(raw, sequence)
+                    parsed = _parse_system_message(raw, sequence, session_key)
                 case "progress" | "file-history-snapshot" | "queue-operation":
                     continue
                 case _:
                     continue
 
-            if not parsed.uuid:
-                parsed.uuid = _fallback_uuid(session_key, sequence)
-            sequence += 1
-            yield parsed
+            for msg in parsed:
+                msg.sequence_num = sequence
+                if not msg.uuid:
+                    msg.uuid = _fallback_uuid(session_key, sequence)
+                sequence += 1
+                yield msg
 
 
 def _parse_codex_session(path: Path, session_key: str) -> Generator[ParsedMessage]:
@@ -97,82 +107,87 @@ def _parse_codex_session(path: Path, session_key: str) -> Generator[ParsedMessag
                 continue
 
             payload_type = _as_str(payload.get("type"))
-            parsed: ParsedMessage | None = None
+            parsed: list[ParsedMessage] = []
 
             if payload_type == "message":
                 role = _as_str(payload.get("role"))
                 if role not in {"user", "assistant"}:
                     continue
                 blocks, text = _parse_codex_content(payload.get("content"))
-                parsed = ParsedMessage(
-                    uuid=_as_str(payload.get("id")) or _fallback_uuid(session_key, sequence),
-                    type="assistant" if role == "assistant" else "user",
-                    role=role,
+                parsed = _normalize_parts(
+                    session_key=session_key,
+                    sequence_start=sequence,
+                    base_uuid=_as_str(payload.get("id")),
+                    parent_uuid=None,
+                    source_type=role,
                     model=current_model,
                     content_blocks=blocks,
                     content_text=text,
+                    usage=TokenUsage(),
                     timestamp=timestamp,
-                    sequence_num=sequence,
                 )
 
             elif payload_type == "function_call":
                 tool_name = _as_str(payload.get("name")) or "tool"
                 call_id = _as_str(payload.get("call_id")) or _fallback_tool_id(
-                    session_key, sequence
+                    session_key,
+                    sequence,
                 )
                 arguments = payload.get("arguments")
                 input_json = _safe_json_string(arguments)
-                parsed = ParsedMessage(
-                    uuid=_fallback_uuid(session_key, sequence),
-                    type="assistant",
-                    role="assistant",
-                    model=current_model,
-                    content_blocks=[
-                        ContentBlock(
-                            type="tool_use",
-                            tool_use=ToolUseBlock(
-                                tool_use_id=call_id,
-                                name=tool_name,
-                                input_json=input_json,
-                            ),
-                        )
-                    ],
-                    content_text="",
-                    timestamp=timestamp,
-                    sequence_num=sequence,
-                )
+                parsed = [
+                    ParsedMessage(
+                        uuid=_fallback_uuid(session_key, sequence),
+                        type="tool_use",
+                        model=current_model,
+                        content_blocks=[
+                            ContentBlock(
+                                type="tool_use",
+                                tool_use=ToolUseBlock(
+                                    tool_use_id=call_id,
+                                    name=tool_name,
+                                    input_json=input_json,
+                                ),
+                            )
+                        ],
+                        content_text=f"{tool_name}\n{input_json}",
+                        timestamp=timestamp,
+                    )
+                ]
 
             elif payload_type == "function_call_output":
                 output = _extract_codex_function_output(payload.get("output"))
-                parsed = ParsedMessage(
-                    uuid=_fallback_uuid(session_key, sequence),
-                    type="user",
-                    role="user",
-                    model=current_model,
-                    content_blocks=[ContentBlock(type="tool_result", text=output)],
-                    content_text=output,
-                    timestamp=timestamp,
-                    sequence_num=sequence,
-                )
+                parsed = [
+                    ParsedMessage(
+                        uuid=_fallback_uuid(session_key, sequence),
+                        type="tool_result",
+                        model=current_model,
+                        content_blocks=[ContentBlock(type="tool_result", text=output)],
+                        content_text=output,
+                        timestamp=timestamp,
+                    )
+                ]
 
             elif payload_type == "reasoning":
                 thinking_text = _extract_codex_reasoning(payload)
                 if thinking_text:
-                    parsed = ParsedMessage(
-                        uuid=_fallback_uuid(session_key, sequence),
-                        type="assistant",
-                        role="assistant",
-                        model=current_model,
-                        content_blocks=[ContentBlock(type="thinking", text=thinking_text)],
-                        content_text=thinking_text,
-                        timestamp=timestamp,
-                        sequence_num=sequence,
-                    )
+                    parsed = [
+                        ParsedMessage(
+                            uuid=_fallback_uuid(session_key, sequence),
+                            type="thinking",
+                            model=current_model,
+                            content_blocks=[ContentBlock(type="thinking", text=thinking_text)],
+                            content_text=thinking_text,
+                            timestamp=timestamp,
+                        )
+                    ]
 
-            if parsed is None:
-                continue
-            sequence += 1
-            yield parsed
+            for msg in parsed:
+                msg.sequence_num = sequence
+                if not msg.uuid:
+                    msg.uuid = _fallback_uuid(session_key, sequence)
+                sequence += 1
+                yield msg
 
 
 def _parse_gemini_session(path: Path, session_key: str) -> Generator[ParsedMessage]:
@@ -198,23 +213,23 @@ def _parse_gemini_session(path: Path, session_key: str) -> Generator[ParsedMessa
         msg_type = _as_str(raw.get("type")).lower()
         timestamp = _as_str(raw.get("timestamp"))
         model = _as_str(raw.get("model"))
-        uuid = _as_str(raw.get("id")) or _fallback_uuid(session_key, sequence)
+        base_uuid = _as_str(raw.get("id"))
         usage = _parse_gemini_usage(raw.get("tokens"))
-
-        parsed: ParsedMessage | None = None
+        parsed: list[ParsedMessage] = []
 
         if msg_type == "user":
             text = _extract_gemini_content_text(raw.get("content"))
-            parsed = ParsedMessage(
-                uuid=uuid,
-                type="user",
-                role="user",
+            parsed = _normalize_parts(
+                session_key=session_key,
+                sequence_start=sequence,
+                base_uuid=base_uuid,
+                parent_uuid=None,
+                source_type="user",
                 model=model,
                 content_blocks=[ContentBlock(type="text", text=text)] if text else [],
                 content_text=text,
-                timestamp=timestamp,
                 usage=usage,
-                sequence_num=sequence,
+                timestamp=timestamp,
             )
         elif msg_type in {"gemini", "assistant", "model"}:
             text = _extract_gemini_content_text(raw.get("content"))
@@ -227,42 +242,51 @@ def _parse_gemini_session(path: Path, session_key: str) -> Generator[ParsedMessa
             if text:
                 blocks.append(ContentBlock(type="text", text=text))
                 text_parts.append(text)
-            parsed = ParsedMessage(
-                uuid=uuid,
-                type="assistant",
-                role="assistant",
+            parsed = _normalize_parts(
+                session_key=session_key,
+                sequence_start=sequence,
+                base_uuid=base_uuid,
+                parent_uuid=None,
+                source_type="assistant",
                 model=model,
                 content_blocks=blocks,
                 content_text="\n".join(text_parts),
-                timestamp=timestamp,
                 usage=usage,
-                sequence_num=sequence,
+                timestamp=timestamp,
             )
         elif msg_type == "info":
             text = _extract_gemini_content_text(raw.get("content"))
-            parsed = ParsedMessage(
-                uuid=uuid,
-                type="system",
-                role="system",
+            parsed = _normalize_parts(
+                session_key=session_key,
+                sequence_start=sequence,
+                base_uuid=base_uuid,
+                parent_uuid=None,
+                source_type="system",
+                model=model,
                 content_blocks=[ContentBlock(type="text", text=text)] if text else [],
                 content_text=text,
+                usage=TokenUsage(),
                 timestamp=timestamp,
-                sequence_num=sequence,
             )
 
-        if parsed is None:
-            continue
-        sequence += 1
-        yield parsed
+        for msg in parsed:
+            msg.sequence_num = sequence
+            if not msg.uuid:
+                msg.uuid = _fallback_uuid(session_key, sequence)
+            sequence += 1
+            yield msg
 
 
-def _parse_claude_conversation_message(raw: dict[str, object], seq: int) -> ParsedMessage | None:
+def _parse_claude_conversation_message(
+    raw: dict[str, object],
+    sequence: int,
+    session_key: str,
+) -> list[ParsedMessage]:
     msg = raw.get("message")
     if not isinstance(msg, dict):
-        return None
+        return []
 
-    msg_type = _as_str(raw.get("type"))
-    role = _as_str(msg.get("role"))
+    source_type = _as_str(raw.get("type"))
     model = _as_str(msg.get("model"))
     uuid = _as_str(raw.get("uuid"))
     parent_uuid = _as_optional_str(raw.get("parentUuid"))
@@ -292,22 +316,180 @@ def _parse_claude_conversation_message(raw: dict[str, object], seq: int) -> Pars
             elif isinstance(block, dict):
                 parsed_block = _parse_claude_content_block(block)
                 content_blocks.append(parsed_block)
-                if parsed_block.type in {"text", "thinking"} and parsed_block.text:
+                if parsed_block.type in {"text", "thinking", "tool_result"} and parsed_block.text:
                     text_parts.append(parsed_block.text)
 
-    return ParsedMessage(
-        uuid=uuid,
+    messages = _normalize_parts(
+        session_key=session_key,
+        sequence_start=sequence,
+        base_uuid=uuid,
         parent_uuid=parent_uuid,
-        type=msg_type,
-        role=role,
+        source_type=source_type,
         model=model,
         content_blocks=content_blocks,
         content_text="\n".join(text_parts),
         usage=usage,
         timestamp=timestamp,
         is_sidechain=is_sidechain,
-        sequence_num=seq,
     )
+    return messages
+
+
+def _normalize_parts(
+    *,
+    session_key: str,
+    sequence_start: int,
+    base_uuid: str,
+    parent_uuid: str | None,
+    source_type: str,
+    model: str,
+    content_blocks: list[ContentBlock],
+    content_text: str,
+    usage: TokenUsage,
+    timestamp: str,
+    is_sidechain: bool = False,
+) -> list[ParsedMessage]:
+    """Split provider-specific payload into canonical single-type messages."""
+    normalized_source = source_type.strip().lower()
+    parts: list[tuple[str, list[ContentBlock], str]] = []
+
+    if normalized_source in {"summary", "system", "info"}:
+        text = content_text.strip() or _first_text(content_blocks)
+        parts.append(
+            (
+                "system",
+                [ContentBlock(type="text", text=text)] if text else [],
+                text,
+            )
+        )
+    elif normalized_source == "user":
+        for block in content_blocks:
+            block_type = block.type.strip().lower()
+            if block_type == "tool_result":
+                text = block.text.strip()
+                parts.append(
+                    (
+                        "tool_result",
+                        [ContentBlock(type="tool_result", text=text)],
+                        text,
+                    )
+                )
+            elif block_type == "user":
+                text = block.text
+                if text.strip():
+                    parts.append(
+                        (
+                            "user",
+                            [ContentBlock(type="text", text=text)],
+                            text,
+                        )
+                    )
+        if not parts and content_text.strip():
+            parts.append(
+                (
+                    "user",
+                    [ContentBlock(type="text", text=content_text)],
+                    content_text,
+                )
+            )
+    elif normalized_source == "assistant":
+        for block in content_blocks:
+            block_type = block.type.strip().lower()
+            if block_type == "text":
+                text = block.text
+                if text.strip():
+                    parts.append(
+                        (
+                            "assistant",
+                            [ContentBlock(type="text", text=text)],
+                            text,
+                        )
+                    )
+            elif block_type == "thinking":
+                text = block.text
+                if text.strip():
+                    parts.append(
+                        (
+                            "thinking",
+                            [ContentBlock(type="thinking", text=text)],
+                            text,
+                        )
+                    )
+            elif block_type == "tool_use" and block.tool_use is not None:
+                tool_text = _tool_use_search_text(block.tool_use)
+                parts.append(
+                    (
+                        "tool_use",
+                        [ContentBlock(type="tool_use", tool_use=block.tool_use)],
+                        tool_text,
+                    )
+                )
+            elif block_type == "tool_result":
+                text = block.text.strip()
+                parts.append(
+                    (
+                        "tool_result",
+                        [ContentBlock(type="tool_result", text=text)],
+                        text,
+                    )
+                )
+        if not parts and content_text.strip():
+            parts.append(
+                (
+                    "assistant",
+                    [ContentBlock(type="text", text=content_text)],
+                    content_text,
+                )
+            )
+    else:
+        text = content_text.strip() or _first_text(content_blocks)
+        parts.append(
+            (
+                "system",
+                [ContentBlock(type="text", text=text)] if text else [],
+                text,
+            )
+        )
+
+    if not parts:
+        parts.append(("system", [], ""))
+
+    canonical_base = base_uuid or _fallback_uuid(session_key, sequence_start)
+    rows: list[ParsedMessage] = []
+    last_uuid = parent_uuid
+    for idx, (msg_type, blocks, text) in enumerate(parts):
+        msg_uuid = canonical_base if idx == 0 else f"{canonical_base}#{idx + 1}"
+        msg_usage = usage if idx == 0 else TokenUsage()
+        rows.append(
+            ParsedMessage(
+                uuid=msg_uuid,
+                parent_uuid=last_uuid,
+                type=normalize_message_type(msg_type),
+                model=model,
+                content_blocks=blocks,
+                content_text=text,
+                usage=msg_usage,
+                timestamp=timestamp,
+                is_sidechain=is_sidechain,
+            )
+        )
+        last_uuid = msg_uuid
+    return rows
+
+
+def _first_text(content_blocks: list[ContentBlock]) -> str:
+    for block in content_blocks:
+        if block.text.strip():
+            return block.text
+    return ""
+
+
+def _tool_use_search_text(tool_use: ToolUseBlock) -> str:
+    name = tool_use.name.strip()
+    input_json = tool_use.input_json.strip()
+    if name and input_json:
+        return f"{name}\n{input_json}"
+    return name or input_json
 
 
 def _parse_claude_content_block(block: dict[str, object]) -> ContentBlock:
@@ -334,29 +516,43 @@ def _parse_claude_content_block(block: dict[str, object]) -> ContentBlock:
             return ContentBlock(type=block_type, text=_as_str(block.get("text")))
 
 
-def _parse_summary_message(raw: dict[str, object], seq: int) -> ParsedMessage:
+def _parse_summary_message(
+    raw: dict[str, object],
+    sequence: int,
+    session_key: str,
+) -> list[ParsedMessage]:
     summary_text = _as_str(raw.get("summary"))
-    return ParsedMessage(
-        uuid=_as_str(raw.get("uuid")),
-        type="summary",
-        role="system",
+    return _normalize_parts(
+        session_key=session_key,
+        sequence_start=sequence,
+        base_uuid=_as_str(raw.get("uuid")),
+        parent_uuid=None,
+        source_type="summary",
+        model="",
+        content_blocks=[ContentBlock(type="text", text=summary_text)] if summary_text else [],
         content_text=summary_text,
-        content_blocks=[ContentBlock(type="text", text=summary_text)],
+        usage=TokenUsage(),
         timestamp=_as_str(raw.get("timestamp")),
-        sequence_num=seq,
     )
 
 
-def _parse_system_message(raw: dict[str, object], seq: int) -> ParsedMessage:
+def _parse_system_message(
+    raw: dict[str, object],
+    sequence: int,
+    session_key: str,
+) -> list[ParsedMessage]:
     text = _as_str(raw.get("text"))
-    return ParsedMessage(
-        uuid=_as_str(raw.get("uuid")),
-        type="system",
-        role="system",
+    return _normalize_parts(
+        session_key=session_key,
+        sequence_start=sequence,
+        base_uuid=_as_str(raw.get("uuid")),
+        parent_uuid=None,
+        source_type="system",
+        model="",
+        content_blocks=[ContentBlock(type="text", text=text)] if text else [],
         content_text=text,
-        content_blocks=[ContentBlock(type="text", text=text)],
+        usage=TokenUsage(),
         timestamp=_as_str(raw.get("timestamp")),
-        sequence_num=seq,
     )
 
 

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib.resources
+import json
+import logging
 import tempfile
+import urllib.parse
 from html import escape
 from pathlib import Path
 
@@ -27,6 +30,8 @@ from cch.ui.theme import (
 from cch.ui.widgets.message_widget import render_message_html
 
 _INLINE_CONTENT_LIMIT_BYTES = 1_500_000
+_MAX_DATA_URL_LENGTH = 1_900_000
+logger = logging.getLogger(__name__)
 
 
 def _load_template() -> str:
@@ -47,6 +52,36 @@ def _get_template() -> str:
 
 def _empty_state() -> str:
     return '<div class="empty-state">Select a session to view the conversation</div>'
+
+
+def _render_error_message(msg_uuid: str) -> str:
+    """Fallback fragment for messages that fail to render."""
+    safe_uuid = escape(msg_uuid)
+    return (
+        f'<div class="message system" data-categories="system" '
+        f'data-message-uuid="{safe_uuid}" id="msg-{safe_uuid}">'
+        '<div class="msg-header"><span class="role-badge system">System</span></div>'
+        '<p style="color:#9AA3AA;font-size:12px;font-style:italic;margin:0;">'
+        "(message could not be rendered)</p></div>"
+    )
+
+
+def _encode_document(document: str) -> bytes:
+    """Encode HTML safely, replacing malformed unicode surrogates."""
+    return document.encode("utf-8", errors="replace")
+
+
+def _data_url_length(content: bytes) -> int:
+    """Return the estimated data URL length used by QWebEngine setContent()."""
+    prefix = "data:text/html;charset=UTF-8,"
+    return len(prefix) + len(urllib.parse.quote_from_bytes(content))
+
+
+def _can_use_inline_content(content: bytes) -> bool:
+    """Return True if setContent() is likely safe (below data URL limits)."""
+    if len(content) > _INLINE_CONTENT_LIMIT_BYTES:
+        return False
+    return _data_url_length(content) <= _MAX_DATA_URL_LENGTH
 
 
 def _build_session_header(detail: SessionDetail) -> str:
@@ -105,6 +140,7 @@ def _build_filter_chips(active_filters: set[str]) -> str:
             classes += " inactive"
         chips.append(
             f'<button class="{classes}" data-filter="{spec.key}" '
+            f'data-label="{escape(spec.label)}" '
             f'style="background-color: {spec.color};" '
             f"onclick=\"toggleFilter('{spec.key}')\">{escape(spec.label)}</button>"
         )
@@ -112,10 +148,27 @@ def _build_filter_chips(active_filters: set[str]) -> str:
 
 
 def _normalize_filters(raw: object) -> list[str] | None:
-    """Normalize a raw JS list of filter names into known ordered names."""
-    if not isinstance(raw, list):
+    """Normalize raw JS filter state into known ordered filter keys.
+
+    Accepts:
+      - JSON string list (preferred)
+      - Python list/tuple/set of strings
+    """
+    values: list[str] | None = None
+    if isinstance(raw, str):
+        if raw == "__CCH_NO_STATE__":
+            return None
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, list):
+            return None
+        values = [item for item in parsed if isinstance(item, str)]
+    elif isinstance(raw, (list, tuple, set)):
+        values = [item for item in raw if isinstance(item, str)]
+    else:
         return None
-    values = [item for item in raw if isinstance(item, str)]
     return normalize_category_keys(values)
 
 
@@ -167,8 +220,21 @@ class MessageWebView(QWidget):
     def _capture_filters_and_render(self, generation: int) -> None:
         """Capture persisted filters from the current page before replacing HTML."""
         self._capture_generation = generation
-        self._capture_timeout.start(120)
-        script = "Array.isArray(window._activeFilters) ? window._activeFilters.slice() : null"
+        self._capture_timeout.start(320)
+        script = (
+            "(function(){"
+            "var filters = null;"
+            "if (Array.isArray(window._activeFilters)) {"
+            "  filters = window._activeFilters;"
+            "} else if (typeof _activeFilters !== 'undefined' && Array.isArray(_activeFilters)) {"
+            "  filters = _activeFilters;"
+            "}"
+            "if (!Array.isArray(filters)) {"
+            "  return '__CCH_NO_STATE__';"
+            "}"
+            "try { return JSON.stringify(filters); } catch (_e) { return '__CCH_NO_STATE__'; }"
+            "})()"
+        )
 
         def _on_filters(raw: object) -> None:
             if generation != self._render_generation:
@@ -204,21 +270,27 @@ class MessageWebView(QWidget):
         header_html = _build_session_header(detail)
 
         # Build filter chips
-        active_filters = set(self._active_filters or DEFAULT_ACTIVE_CATEGORY_KEYS)
+        active_filters = set(self._active_filters)
         chips_html = _build_filter_chips(active_filters)
 
         # Build messages
         parts: list[str] = []
         for msg in detail.messages:
-            html = render_message_html(msg)
+            try:
+                html = render_message_html(msg)
+            except Exception:
+                logger.exception(
+                    "Failed rendering message %s in session %s",
+                    msg.uuid,
+                    detail.session_id,
+                )
+                html = _render_error_message(msg.uuid)
             if html:
                 parts.append(html)
         body = "\n".join(parts) if parts else _empty_state()
 
         # Build initial filter state JS array
-        initial_filters = _filters_js_array(
-            self._active_filters or list(DEFAULT_ACTIVE_CATEGORY_KEYS)
-        )
+        initial_filters = _filters_js_array(self._active_filters)
 
         # Assemble the page
         template = _get_template()
@@ -233,8 +305,8 @@ class MessageWebView(QWidget):
 
     def _load_document(self, document: str) -> None:
         """Load HTML using the safest transport for the payload size."""
-        content = document.encode("utf-8")
-        if len(content) <= _INLINE_CONTENT_LIMIT_BYTES:
+        content = _encode_document(document)
+        if _can_use_inline_content(content):
             self._webview.setContent(content, "text/html;charset=UTF-8")
             return
 

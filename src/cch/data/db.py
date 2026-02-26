@@ -11,7 +11,7 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -55,8 +55,9 @@ CREATE TABLE IF NOT EXISTS messages (
     session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
     uuid TEXT NOT NULL,
     parent_uuid TEXT,
-    type TEXT NOT NULL,
-    role TEXT,
+    type TEXT NOT NULL CHECK (
+        type IN ('user', 'assistant', 'tool_use', 'tool_result', 'thinking', 'system')
+    ),
     model TEXT,
     content_text TEXT,
     content_json TEXT,
@@ -67,7 +68,6 @@ CREATE TABLE IF NOT EXISTS messages (
     timestamp TEXT NOT NULL,
     is_sidechain INTEGER DEFAULT 0,
     sequence_num INTEGER NOT NULL,
-    category_mask INTEGER NOT NULL DEFAULT 0,
     UNIQUE(session_id, uuid)
 );
 
@@ -121,8 +121,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_modified ON sessions(modified_at);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session_seq ON messages(session_id, sequence_num);
-CREATE INDEX IF NOT EXISTS idx_messages_role_type ON messages(role, type);
-CREATE INDEX IF NOT EXISTS idx_messages_category_mask ON messages(category_mask);
+CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(type);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_name ON tool_calls(tool_name);
@@ -135,6 +134,7 @@ class Database:
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         self._conn: aiosqlite.Connection | None = None
+        self.requires_full_reindex = False
 
     async def __aenter__(self) -> Database:
         await self.connect()
@@ -197,6 +197,7 @@ class Database:
 
     async def _ensure_schema(self) -> None:
         """Rebuild schema when version changes; otherwise ensure all objects exist."""
+        self.requires_full_reindex = False
         await self.conn.execute("""
             CREATE TABLE IF NOT EXISTS app_meta (
                 key TEXT PRIMARY KEY,
@@ -209,6 +210,7 @@ class Database:
             await self.conn.executescript(SCHEMA_SQL)
             return
 
+        self.requires_full_reindex = True
         logger.info("Rebuilding DB schema from version %s to %s", current_version, SCHEMA_VERSION)
         await self.conn.execute("PRAGMA foreign_keys=OFF")
         await self.conn.executescript("""

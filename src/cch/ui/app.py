@@ -26,6 +26,7 @@ from cch.ui.panels.content_panel import ContentPanel
 from cch.ui.panels.detail_list_panel import DetailListPanel
 from cch.ui.panels.list_panel import ListPanel
 from cch.ui.panels.nav_sidebar import NavSidebar
+from cch.ui.temp_cleanup import cleanup_stale_webview_temp_dirs
 from cch.ui.theme import build_stylesheet
 
 if TYPE_CHECKING:
@@ -181,7 +182,11 @@ class CCHMainWindow(QMainWindow):
 
             # Background indexing
             logger.info("Starting background indexing...")
+            force_reindex = bool(self._services.db.requires_full_reindex)
+            if force_reindex:
+                logger.info("Detected old DB schema. Running full reindex.")
             result = await self._services.indexer.index_all(
+                force=force_reindex,
                 progress_callback=lambda c, t, m: logger.info("[%d/%d] %s", c, t, m)
             )
             logger.info("Indexing complete: %s", result)
@@ -270,6 +275,9 @@ def run_app(config: Config) -> None:
     """Entry point: create QApplication, event loop, main window, and run."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     _ensure_webengine_flags()
+    removed = cleanup_stale_webview_temp_dirs()
+    if removed:
+        logger.info("Removed %d stale webview temp directories", removed)
 
     app = QApplication(sys.argv)
     app.setApplicationName("Code Chat History")

@@ -8,6 +8,7 @@ from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
+from cch.models.categories import COLOR_BY_KEY, LABEL_BY_KEY, normalize_message_type
 from cch.ui.theme import (
     COLORS,
     format_relative_time,
@@ -287,7 +288,7 @@ class SessionDelegate(QStyledItemDelegate):
 
 
 class SearchResultDelegate(QStyledItemDelegate):
-    """Search result row: snippet, role, provider badge, project and timestamp."""
+    """Search result row: snippet, message type, provider badge, project and timestamp."""
 
     def sizeHint(
         self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
@@ -312,7 +313,7 @@ class SearchResultDelegate(QStyledItemDelegate):
             painter.fillRect(rect, _row_background(index))
 
         snippet = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        role = str(index.data(Qt.ItemDataRole.UserRole + 1) or "")
+        message_type = normalize_message_type(str(index.data(Qt.ItemDataRole.UserRole + 1) or ""))
         project = str(index.data(Qt.ItemDataRole.UserRole + 2) or "")
         timestamp = str(index.data(Qt.ItemDataRole.UserRole + 3) or "")
         provider = str(index.data(Qt.ItemDataRole.UserRole + 4) or "claude")
@@ -320,7 +321,7 @@ class SearchResultDelegate(QStyledItemDelegate):
         left = rect.left() + 16
         right = rect.right() - 16
 
-        role_color = COLORS["primary"] if role == "user" else COLORS["success"]
+        role_color = COLOR_BY_KEY.get(message_type, COLORS["text_muted"])
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(role_color))
         painter.drawEllipse(left, rect.top() + 13, 6, 6)
@@ -330,7 +331,7 @@ class SearchResultDelegate(QStyledItemDelegate):
         painter.drawText(
             QRect(left + 10, rect.top() + 7, 72, 14),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            role.capitalize(),
+            LABEL_BY_KEY.get(message_type, message_type.capitalize()),
         )
 
         badge_rect = _draw_provider_badge(

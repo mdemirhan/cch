@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from html import escape
 
-from cch.models.categories import category_keys_from_mask, category_mask_for_message
+from cch.models.categories import normalize_message_type
 from cch.models.sessions import MessageView
 from cch.ui.theme import MONO_FAMILY, format_tokens
 from cch.ui.widgets.markdown_renderer import render_markdown
@@ -29,39 +29,33 @@ def classify_message(
     content_blocks: list[dict[str, object]] | None = None,
 ) -> set[str]:
     """Return the set of content categories present in a message."""
-    blocks = (
-        content_blocks if content_blocks is not None else _parse_content_json(msg.content_json)
-    )
-    mask = category_mask_for_message(
-        msg_type=msg.type,
-        role=msg.role,
-        content_blocks=blocks,
-        content_text=msg.content_text,
-        has_tool_calls=bool(msg.tool_calls),
-    )
-    return set(category_keys_from_mask(mask))
+    _ = content_blocks
+    return {normalize_message_type(msg.type)}
 
 
 def render_message_html(msg: MessageView) -> str:
     """Render a single message as an HTML fragment with data-categories."""
     content_blocks = _parse_content_json(msg.content_json)
     categories = classify_message(msg, content_blocks=content_blocks)
+    message_type = normalize_message_type(msg.type)
 
-    if msg.type in ("system", "summary"):
+    if message_type == "system":
         return _render_system(msg, categories)
 
-    if msg.type == "user" and msg.role == "user":
-        has_text = any(b.get("type") == "text" for b in content_blocks)
-        is_tool_result = any(b.get("type") == "tool_result" for b in content_blocks)
+    if message_type == "user":
+        return _render_user(msg, categories)
 
-        if is_tool_result and not has_text:
-            return _render_tool_result(msg, content_blocks, categories)
-
-        if msg.content_text.strip():
-            return _render_user(msg, categories)
-
-    if msg.role == "assistant":
+    if message_type == "assistant":
         return _render_assistant(msg, categories, content_blocks)
+
+    if message_type == "thinking":
+        return _render_thinking_message(msg, categories, content_blocks)
+
+    if message_type == "tool_use":
+        return _render_tool_use_message(msg, content_blocks, categories)
+
+    if message_type == "tool_result":
+        return _render_tool_result(msg, content_blocks, categories)
 
     return _render_unknown(msg, categories)
 
@@ -86,8 +80,12 @@ def _message_attrs(msg: MessageView, categories: set[str], cls: str) -> str:
 
 def _render_user(msg: MessageView, categories: set[str]) -> str:
     """Render a user message."""
-    md_html = render_markdown(msg.content_text[:5000])
-    body = _extract_body(md_html)
+    text = msg.content_text.strip()
+    if not text:
+        body = _empty_placeholder("(empty user message)")
+    else:
+        md_html = render_markdown(text[:5000])
+        body = _extract_body(md_html)
 
     timestamp = msg.timestamp[:19] if msg.timestamp else ""
     return (
@@ -107,27 +105,15 @@ def _render_assistant(
 ) -> str:
     """Render an assistant message with text, thinking, and tool calls."""
     has_text = False
-    has_thinking = False
-    has_tool_use = False
     for block in content_blocks:
         if block.get("type") == "text" and str(block.get("text", "")).strip():
             has_text = True
-        if block.get("type") == "thinking" and str(block.get("text", "")).strip():
-            has_thinking = True
-        if block.get("type") == "tool_use":
-            has_tool_use = True
 
-    # Check fallback tool calls
-    if not has_tool_use and msg.tool_calls:
-        has_tool_use = True
+    if not has_text and msg.content_text.strip():
+        has_text = True
 
-    if not has_text and not has_thinking and not has_tool_use:
+    if not has_text:
         return _render_unknown(msg, categories)
-
-    # Tool-call-only messages: compact card without "Assistant" header
-    has_content = has_text or has_thinking
-    if not has_content and has_tool_use:
-        return _render_tool_call_only(msg, content_blocks, categories)
 
     parts: list[str] = []
 
@@ -154,44 +140,26 @@ def _render_assistant(
     )
 
     # Content blocks
-    rendered_tool_use = False
     for block in content_blocks:
-        match block.get("type"):
-            case "text":
-                text = str(block.get("text", ""))
-                if text.strip():
-                    md_html = render_markdown(text[:10000])
-                    parts.append(_extract_body(md_html))
-            case "thinking":
-                text = str(block.get("text", ""))
-                if text.strip():
-                    bid = _next_block_id("thinking")
-                    parts.append(render_thinking_html(text, block_id=bid))
-            case "tool_use":
-                tool_use = block.get("tool_use")
-                if isinstance(tool_use, dict):
-                    name = str(tool_use.get("name", "unknown"))
-                    input_json = tool_use.get("input_json", "{}")
-                    bid = _next_block_id("tool")
-                    parts.append(render_tool_call_html(name, str(input_json), block_id=bid))
-                    rendered_tool_use = True
-
-    # Fallback: use msg.tool_calls if content_json had no tool_use blocks
-    if not rendered_tool_use:
-        for tc in msg.tool_calls:
-            bid = _next_block_id("tool")
-            parts.append(render_tool_call_html(tc.tool_name, tc.input_json, block_id=bid))
+        if block.get("type") != "text":
+            continue
+        text = str(block.get("text", ""))
+        if text.strip():
+            md_html = render_markdown(text[:10000])
+            parts.append(_extract_body(md_html))
+    if not parts and msg.content_text.strip():
+        parts.append(_extract_body(render_markdown(msg.content_text[:10000])))
 
     body = "\n".join(parts)
     return f"<div {_message_attrs(msg, categories, 'assistant')}>{body}</div>"
 
 
-def _render_tool_call_only(
+def _render_tool_use_message(
     msg: MessageView,
     content_blocks: list[dict[str, object]],
     categories: set[str],
 ) -> str:
-    """Render an assistant message that contains only tool calls (no text/thinking)."""
+    """Render a canonical tool-use message."""
     parts: list[str] = []
 
     rendered_tool_use = False
@@ -217,9 +185,31 @@ def _render_tool_call_only(
     return f"<div {_message_attrs(msg, categories, 'tool-call-only')}>{body}</div>"
 
 
+def _render_thinking_message(
+    msg: MessageView,
+    categories: set[str],
+    content_blocks: list[dict[str, object]],
+) -> str:
+    """Render a canonical thinking message."""
+    parts: list[str] = []
+    for block in content_blocks:
+        if block.get("type") != "thinking":
+            continue
+        text = str(block.get("text", ""))
+        if text.strip():
+            bid = _next_block_id("thinking")
+            parts.append(render_thinking_html(text, block_id=bid))
+    if not parts and msg.content_text.strip():
+        bid = _next_block_id("thinking")
+        parts.append(render_thinking_html(msg.content_text, block_id=bid))
+    if not parts:
+        parts.append(_empty_placeholder("(empty thinking message)"))
+    return f"<div {_message_attrs(msg, categories, 'assistant')}>{''.join(parts)}</div>"
+
+
 def _render_system(msg: MessageView, categories: set[str]) -> str:
     """Render a system or summary message."""
-    label = "Summary" if msg.type == "summary" else "System"
+    label = "System"
     timestamp = msg.timestamp[:19] if msg.timestamp else ""
     text = _system_text(msg)
     if text:
@@ -322,12 +312,13 @@ def _empty_placeholder(text: str) -> str:
 
 def _render_unknown(msg: MessageView, categories: set[str]) -> str:
     """Render a minimal card for unsupported/empty message structures."""
+    message_type = normalize_message_type(msg.type)
     role_label = "Assistant"
     cls = "assistant"
-    if msg.type in ("summary", "system") or msg.role == "system":
+    if message_type == "system":
         role_label = "System"
         cls = "system"
-    elif msg.role == "user":
+    elif message_type == "user":
         role_label = "You"
         cls = "user"
     timestamp = msg.timestamp[:19] if msg.timestamp else ""

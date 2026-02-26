@@ -12,7 +12,7 @@ class SearchResult(BaseModel):
     session_id: str
     project_name: str = ""
     provider: str = "claude"
-    role: str = ""
+    message_type: str = ""
     snippet: str = ""
     timestamp: str = ""
 

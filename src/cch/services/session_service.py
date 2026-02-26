@@ -149,7 +149,6 @@ class SessionService:
         messages = [
             MessageView(
                 uuid=m["uuid"],
-                role=m["role"] or "",
                 model=m["model"] or "",
                 type=m["type"] or "",
                 content_text=m["content_text"] or "",
@@ -161,7 +160,6 @@ class SessionService:
                 timestamp=m["timestamp"] or "",
                 is_sidechain=bool(m["is_sidechain"]),
                 sequence_num=m["sequence_num"] or 0,
-                category_mask=m["category_mask"] or 0,
                 tool_calls=tc_by_msg.get(m["uuid"], []),
             )
             for m in msg_rows

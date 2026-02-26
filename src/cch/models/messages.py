@@ -35,8 +35,7 @@ class ParsedMessage(BaseModel):
 
     uuid: str = ""
     parent_uuid: str | None = None
-    type: str  # user, assistant, summary, system
-    role: str = ""
+    type: str  # user, assistant, tool_use, tool_result, thinking, system
     model: str = ""
     content_blocks: list[ContentBlock] = Field(default_factory=list)
     content_text: str = ""

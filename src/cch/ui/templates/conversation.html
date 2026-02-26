@@ -572,6 +572,29 @@ mark.search-hl {
 <script>
 /* ── Filter state ── */
 var _activeFilters = {initial_filters};
+(function() {
+    try {
+        var raw = window.name || "";
+        if (raw.indexOf("cch-filters:") === 0) {
+            var parsed = JSON.parse(raw.substring("cch-filters:".length));
+            if (Array.isArray(parsed)) {
+                _activeFilters = parsed.slice();
+            }
+        }
+    } catch (_err) {
+        /* ignore invalid persisted payload */
+    }
+})();
+window._activeFilters = Array.isArray(_activeFilters) ? _activeFilters.slice() : [];
+
+function _publishActiveFilters() {
+    window._activeFilters = Array.isArray(_activeFilters) ? _activeFilters.slice() : [];
+    try {
+        window.name = "cch-filters:" + JSON.stringify(window._activeFilters);
+    } catch (_err) {
+        /* ignore window.name write errors */
+    }
+}
 
 function _allFilterNames() {
     var chips = document.querySelectorAll('.filter-chip[data-filter]');
@@ -596,6 +619,7 @@ function _sanitizeActiveFilters() {
         }
     }
     _activeFilters = sanitized;
+    _publishActiveFilters();
 }
 
 function syncFilterChips() {
@@ -612,6 +636,39 @@ function syncFilterChips() {
     }
 }
 
+function updateFilterCounts() {
+    var chips = document.querySelectorAll('.filter-chip[data-filter]');
+    var messages = document.querySelectorAll('.message[data-categories]');
+    var counts = {};
+
+    for (var i = 0; i < chips.length; i++) {
+        var key = chips[i].getAttribute('data-filter');
+        if (key) counts[key] = 0;
+    }
+
+    for (var m = 0; m < messages.length; m++) {
+        var cats = messages[m].getAttribute('data-categories');
+        if (!cats) continue;
+        var parts = cats.split(',');
+        for (var p = 0; p < parts.length; p++) {
+            var category = parts[p];
+            if (Object.prototype.hasOwnProperty.call(counts, category)) {
+                counts[category] += 1;
+            }
+        }
+    }
+
+    for (var c = 0; c < chips.length; c++) {
+        var chip = chips[c];
+        var filterName = chip.getAttribute('data-filter');
+        var baseLabel = chip.getAttribute('data-label') || chip.textContent || '';
+        var count = filterName && Object.prototype.hasOwnProperty.call(counts, filterName)
+            ? counts[filterName]
+            : 0;
+        chip.textContent = baseLabel + " (" + count + ")";
+    }
+}
+
 var _PAGE_SIZE = 100;
 var _currentPage = 0;
 var _visibleMessages = [];
@@ -624,6 +681,7 @@ function toggleFilter(name) {
     } else {
         _activeFilters.push(name);
     }
+    _publishActiveFilters();
     syncFilterChips();
     applyFilters(true);
 }
@@ -792,6 +850,7 @@ function focusMessageByUuid(messageUuid) {
                 _activeFilters.push(parts[j]);
             }
         }
+        _publishActiveFilters();
         syncFilterChips();
     }
 
@@ -959,7 +1018,9 @@ function scrollToBottom() {
 }
 
 /* ── Initial render state ── */
+_publishActiveFilters();
 syncFilterChips();
+updateFilterCounts();
 applyFilters(true);
 requestAnimationFrame(function() {
     document.body.classList.remove('preinit');

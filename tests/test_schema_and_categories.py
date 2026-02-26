@@ -8,9 +8,8 @@ from result import Ok
 from cch.data.db import SCHEMA_VERSION, Database
 from cch.models.categories import (
     ALL_CATEGORY_KEYS,
-    category_keys_from_mask,
-    category_mask_for_keys,
     normalize_category_keys,
+    normalize_message_type,
 )
 from cch.models.sessions import MessageView
 from cch.services.session_service import SessionService
@@ -37,20 +36,20 @@ async def test_db_rebuilds_when_schema_version_changes(tmp_path) -> None:
         projects = await db.fetch_one("SELECT COUNT(*) as cnt FROM projects")
         assert version is not None and int(version["value"]) == SCHEMA_VERSION
         assert projects is not None and int(projects["cnt"]) == 0
+        assert db.requires_full_reindex is True
 
 
-def test_category_keys_and_mask_round_trip() -> None:
-    normalized = normalize_category_keys(["assistant", "invalid", "user"])
-    assert normalized == ["user", "assistant"]
-    mask = category_mask_for_keys(["thinking", "tool_call", "invalid"])
-    assert set(category_keys_from_mask(mask)) == {"thinking", "tool_call"}
+def test_category_key_normalization() -> None:
+    normalized = normalize_category_keys(["assistant", "invalid", "user", "tool_call"])
+    assert normalized == ["user", "assistant", "tool_use"]
     assert normalize_category_keys(None) == list(ALL_CATEGORY_KEYS)
+    assert normalize_message_type("tool_call") == "tool_use"
+    assert normalize_message_type("unknown-value") == "system"
 
 
 def test_unknown_message_is_rendered_as_placeholder() -> None:
     msg = MessageView(
         uuid="msg-1",
-        role="assistant",
         type="assistant",
         content_text="",
         content_json="[]",
@@ -86,7 +85,6 @@ async def test_session_detail_default_limit_window(test_db: Database) -> None:
             f"m-{idx}",
             None,
             "assistant",
-            "assistant",
             "model-x",
             f"text-{idx}",
             '[{"type":"text","text":"text"}]',
@@ -97,17 +95,16 @@ async def test_session_detail_default_limit_window(test_db: Database) -> None:
             f"2026-01-01T00:00:{idx % 60:02d}Z",
             0,
             idx,
-            2,
         )
         for idx in range(1500)
     ]
     await test_db.execute_many(
         """INSERT INTO messages
-           (session_id, uuid, parent_uuid, type, role, model,
+           (session_id, uuid, parent_uuid, type, model,
             content_text, content_json,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-            timestamp, is_sidechain, sequence_num, category_mask)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            timestamp, is_sidechain, sequence_num)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         message_rows,
     )
     await test_db.commit()

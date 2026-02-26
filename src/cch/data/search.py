@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from cch.models.categories import category_mask_for_keys
+from cch.models.categories import normalize_category_keys
 from cch.models.search import SearchResult, SearchResults
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ class SearchEngine:
         Args:
             query: Full-text search query.
             roles: Filter by categories. Valid values: "user", "assistant",
-                   "tool_call", "thinking", "tool_result", "system".
+                   "tool_use", "thinking", "tool_result", "system".
                    None or empty means all.
             project_id: Filter by project. Empty for all.
             limit: Maximum results to return.
@@ -50,10 +50,11 @@ class SearchEngine:
         params: list[str | int] = [fts_query]
 
         if roles:
-            category_mask = category_mask_for_keys(roles)
-            if category_mask:
-                conditions.append("(m.category_mask & ?) != 0")
-                params.append(category_mask)
+            normalized_roles = normalize_category_keys(roles)
+            if normalized_roles:
+                placeholders = ",".join("?" for _ in normalized_roles)
+                conditions.append(f"m.type IN ({placeholders})")
+                params.extend(normalized_roles)
 
         if project_ids:
             normalized_ids = [pid for pid in project_ids if pid]
@@ -87,7 +88,7 @@ class SearchEngine:
             SELECT
                 m.uuid as message_uuid,
                 m.session_id,
-                m.role,
+                m.type as message_type,
                 m.timestamp,
                 snippet(messages_fts, 0, '<mark>', '</mark>', '...', 64) as snippet,
                 p.project_name,
@@ -109,7 +110,7 @@ class SearchEngine:
                 session_id=row["session_id"],
                 project_name=row["project_name"] or "",
                 provider=row["provider"] or "claude",
-                role=row["role"] or "",
+                message_type=row["message_type"] or "",
                 snippet=row["snippet"] or "",
                 timestamp=row["timestamp"] or "",
             )

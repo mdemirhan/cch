@@ -1,4 +1,4 @@
-"""Tests for JSONL parser."""
+"""Tests for session parser canonicalization."""
 
 from __future__ import annotations
 
@@ -11,57 +11,55 @@ from cch.data.parser import parse_session_file
 class TestParseSessionFile:
     def test_parses_messages(self, sample_session_path: Path) -> None:
         messages = list(parse_session_file(sample_session_path))
-        # Should skip file-history-snapshot and yield user/assistant/summary messages
-        assert len(messages) >= 5
+        # Sample file contains mixed assistant/text/thinking/tool_use/tool_result/system events.
+        assert len(messages) >= 7
+
+    def test_canonical_types_from_claude(self, sample_session_path: Path) -> None:
+        messages = list(parse_session_file(sample_session_path))
+        types = [m.type for m in messages]
+        assert "user" in types
+        assert "assistant" in types
+        assert "thinking" in types
+        assert "tool_use" in types
+        assert "tool_result" in types
+        assert "system" in types
 
     def test_user_message_content(self, sample_session_path: Path) -> None:
         messages = list(parse_session_file(sample_session_path))
-        user_msgs = [m for m in messages if m.type == "user" and m.role == "user"]
+        user_msgs = [m for m in messages if m.type == "user"]
         assert len(user_msgs) >= 1
         assert "help me fix a bug" in user_msgs[0].content_text
 
-    def test_assistant_message_with_tool_use(self, sample_session_path: Path) -> None:
+    def test_tool_use_details(self, sample_session_path: Path) -> None:
         messages = list(parse_session_file(sample_session_path))
-        assistant_msgs = [m for m in messages if m.role == "assistant"]
-        assert len(assistant_msgs) >= 2
-
-        # Find the message with tool_use
-        tool_msg = None
-        for m in assistant_msgs:
-            for b in m.content_blocks:
-                if b.type == "tool_use":
-                    tool_msg = m
-                    break
-
-        assert tool_msg is not None
-        tool_block = [b for b in tool_msg.content_blocks if b.type == "tool_use"][0]
+        tool_msgs = [m for m in messages if m.type == "tool_use"]
+        assert tool_msgs
+        tool_block = [b for b in tool_msgs[0].content_blocks if b.type == "tool_use"][0]
         assert tool_block.tool_use is not None
         assert tool_block.tool_use.name == "Edit"
         assert tool_block.tool_use.tool_use_id == "tool-001"
 
     def test_thinking_block(self, sample_session_path: Path) -> None:
         messages = list(parse_session_file(sample_session_path))
-        assistant_msgs = [m for m in messages if m.role == "assistant"]
-        # First assistant message should have thinking block
-        first_assistant = assistant_msgs[0]
-        thinking_blocks = [b for b in first_assistant.content_blocks if b.type == "thinking"]
-        assert len(thinking_blocks) == 1
-        assert "think about" in thinking_blocks[0].text
+        thinking_msgs = [m for m in messages if m.type == "thinking"]
+        assert len(thinking_msgs) >= 1
+        assert "think about" in thinking_msgs[0].content_text
 
-    def test_token_usage(self, sample_session_path: Path) -> None:
+    def test_token_usage_only_first_split_message(self, sample_session_path: Path) -> None:
         messages = list(parse_session_file(sample_session_path))
-        assistant_msgs = [m for m in messages if m.role == "assistant"]
-        first = assistant_msgs[0]
-        assert first.usage.input_tokens == 100
-        assert first.usage.output_tokens == 50
-        assert first.usage.cache_read_tokens == 500
-        assert first.usage.cache_creation_tokens == 200
+        # First assistant raw event splits into thinking(uuid-002) and assistant(uuid-002#2).
+        first_split = [m for m in messages if m.uuid.startswith("uuid-002")]
+        assert len(first_split) >= 2
+        assert first_split[0].usage.input_tokens == 100
+        assert first_split[0].usage.output_tokens == 50
+        assert first_split[1].usage.input_tokens == 0
+        assert first_split[1].usage.output_tokens == 0
 
-    def test_summary_message(self, sample_session_path: Path) -> None:
+    def test_summary_message_becomes_system(self, sample_session_path: Path) -> None:
         messages = list(parse_session_file(sample_session_path))
-        summaries = [m for m in messages if m.type == "summary"]
-        assert len(summaries) == 1
-        assert "Fixed a bug" in summaries[0].content_text
+        system_messages = [m for m in messages if m.type == "system"]
+        assert system_messages
+        assert "Fixed a bug" in system_messages[-1].content_text
 
     def test_sequence_numbers(self, sample_session_path: Path) -> None:
         messages = list(parse_session_file(sample_session_path))
@@ -75,14 +73,15 @@ class TestParseSessionFile:
         assert first_user.uuid == "uuid-001"
         assert first_user.parent_uuid is None
 
-        first_assistant = messages[1]
-        assert first_assistant.uuid == "uuid-002"
-        assert first_assistant.parent_uuid == "uuid-001"
+        first_assistant_split = messages[1]
+        assert first_assistant_split.uuid == "uuid-002"
+        assert first_assistant_split.parent_uuid == "uuid-001"
 
     def test_model_field(self, sample_session_path: Path) -> None:
         messages = list(parse_session_file(sample_session_path))
-        assistant_msgs = [m for m in messages if m.role == "assistant"]
-        for m in assistant_msgs:
+        assistant_like = [m for m in messages if m.type in {"assistant", "thinking", "tool_use"}]
+        assert assistant_like
+        for m in assistant_like:
             assert m.model == "claude-opus-4-6"
 
     def test_malformed_field_types_do_not_crash(self, tmp_path: Path) -> None:
@@ -105,7 +104,6 @@ class TestParseSessionFile:
         msg = parsed[0]
         assert msg.uuid.startswith("malformed:msg:")
         assert msg.timestamp == ""
-        assert msg.role == ""
         assert msg.usage.input_tokens == 0
 
     def test_parses_codex_format(self, tmp_path: Path) -> None:
@@ -154,8 +152,8 @@ class TestParseSessionFile:
 
         messages = list(parse_session_file(path, provider="codex", session_id="codex:abc"))
         assert len(messages) == 3
-        assert messages[0].role == "user"
-        assert messages[1].content_blocks[0].type == "tool_use"
+        assert messages[0].type == "user"
+        assert messages[1].type == "tool_use"
         assert messages[2].model == "gpt-5-codex"
 
     def test_parses_gemini_format(self, tmp_path: Path) -> None:
@@ -189,7 +187,7 @@ class TestParseSessionFile:
         path.write_text(json.dumps(payload), encoding="utf-8")
 
         messages = list(parse_session_file(path, provider="gemini", session_id="gemini:g-1"))
-        assert len(messages) == 3
-        assert messages[1].role == "assistant"
+        assert len(messages) == 4
+        assert messages[1].type == "thinking"
+        assert messages[2].type == "assistant"
         assert messages[1].usage.input_tokens == 10
-        assert messages[1].content_blocks[0].type == "thinking"

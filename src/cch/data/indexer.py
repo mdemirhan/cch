@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from cch.data.discovery import DiscoveredSession, discover_sessions
 from cch.data.parser import parse_session_file
-from cch.models.categories import category_mask_for_message
 from cch.models.indexing import IndexResult
 
 if TYPE_CHECKING:
@@ -202,9 +201,9 @@ class Indexer:
             ):
                 message_count += 1
 
-                if msg.type == "user" and msg.role == "user":
+                if msg.type == "user":
                     user_count += 1
-                if msg.role == "assistant":
+                if msg.type == "assistant":
                     assistant_count += 1
 
                 total_input += msg.usage.input_tokens
@@ -225,7 +224,6 @@ class Indexer:
                 if (
                     not first_prompt
                     and msg.type == "user"
-                    and msg.role == "user"
                     and msg.content_text
                 ):
                     first_prompt = msg.content_text[:500]
@@ -234,20 +232,12 @@ class Indexer:
                     [b.model_dump() for b in msg.content_blocks],
                     default=str,
                 )
-                category_mask = category_mask_for_message(
-                    msg_type=msg.type,
-                    role=msg.role,
-                    content_blocks=msg.content_blocks,
-                    content_text=msg.content_text,
-                    has_tool_calls=False,
-                )
                 message_rows.append(
                     (
                         session.session_id,
                         msg.uuid,
                         msg.parent_uuid,
                         msg.type,
-                        msg.role,
                         msg.model,
                         msg.content_text,
                         content_json,
@@ -258,7 +248,6 @@ class Indexer:
                         msg.timestamp,
                         1 if msg.is_sidechain else 0,
                         msg.sequence_num,
-                        category_mask,
                     )
                 )
 
@@ -357,11 +346,11 @@ class Indexer:
     async def _flush_message_rows(self, rows: list[tuple[object, ...]]) -> None:
         await self._db.execute_many(
             """INSERT OR REPLACE INTO messages
-            (session_id, uuid, parent_uuid, type, role, model,
+            (session_id, uuid, parent_uuid, type, model,
              content_text, content_json,
              input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-             timestamp, is_sidechain, sequence_num, category_mask)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             timestamp, is_sidechain, sequence_num)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             rows,
         )
 
