@@ -23,3 +23,4 @@ class SearchResults(BaseModel):
     results: list[SearchResult] = Field(default_factory=list)
     total_count: int = 0
     query: str = ""
+    type_counts: dict[str, int] = Field(default_factory=dict)

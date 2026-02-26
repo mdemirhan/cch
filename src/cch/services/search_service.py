@@ -24,6 +24,8 @@ class SearchService:
         roles: list[str] | None = None,
         project_id: str = "",
         project_ids: list[str] | None = None,
+        providers: list[str] | None = None,
+        project_query: str = "",
         limit: int = 50,
         offset: int = 0,
     ) -> Result[SearchResults, str]:
@@ -36,6 +38,8 @@ class SearchService:
                 roles=roles,
                 project_id=project_id,
                 project_ids=project_ids,
+                providers=providers,
+                project_query=project_query,
                 limit=limit,
                 offset=offset,
             )

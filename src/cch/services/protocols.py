@@ -65,6 +65,8 @@ class SearchServiceProtocol(Protocol):
         roles: list[str] | None = None,
         project_id: str = "",
         project_ids: list[str] | None = None,
+        providers: list[str] | None = None,
+        project_query: str = "",
         limit: int = 50,
         offset: int = 0,
     ) -> Result[SearchResults, str]: ...

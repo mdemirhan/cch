@@ -8,6 +8,7 @@ from cch.config import Config
 from cch.data.db import Database
 from cch.data.indexer import Indexer
 from cch.data.search import SearchEngine
+from cch.models.categories import ALL_CATEGORY_KEYS
 
 
 class TestSearchEngine:
@@ -62,3 +63,36 @@ class TestSearchEngine:
         engine = SearchEngine(indexed_db)
         results = await engine.search('bug"')
         assert results.total_count >= 0
+
+    @pytest.mark.asyncio
+    async def test_search_with_provider_filter(self, indexed_db: Database) -> None:
+        engine = SearchEngine(indexed_db)
+        claude_results = await engine.search("bug", providers=["claude"])
+        codex_results = await engine.search("bug", providers=["codex"])
+        assert claude_results.total_count >= 1
+        assert codex_results.total_count == 0
+
+    @pytest.mark.asyncio
+    async def test_search_with_project_query_filter(self, indexed_db: Database) -> None:
+        engine = SearchEngine(indexed_db)
+        matching = await engine.search("bug", project_query="project")
+        non_matching = await engine.search("bug", project_query="definitely-missing-project")
+        assert matching.total_count >= 1
+        assert non_matching.total_count == 0
+
+    @pytest.mark.asyncio
+    async def test_search_returns_type_counts(self, indexed_db: Database) -> None:
+        engine = SearchEngine(indexed_db)
+        results = await engine.search("bug")
+        assert all(key in results.type_counts for key in ALL_CATEGORY_KEYS)
+        assert sum(results.type_counts.values()) == results.total_count
+
+    @pytest.mark.asyncio
+    async def test_search_role_filter_does_not_hide_type_count_facets(
+        self, indexed_db: Database
+    ) -> None:
+        engine = SearchEngine(indexed_db)
+        all_results = await engine.search("bug")
+        filtered = await engine.search("bug", roles=["user"])
+        assert filtered.total_count <= all_results.total_count
+        assert filtered.type_counts == all_results.type_counts
