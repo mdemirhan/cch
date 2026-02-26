@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PySide6.QtCore import (
     QAbstractListModel,
     QModelIndex,
@@ -16,6 +18,14 @@ from cch.models.sessions import SessionSummary
 from cch.ui.finder import show_in_file_manager
 from cch.ui.theme import COLORS
 from cch.ui.widgets.delegates import SessionDelegate
+
+
+@dataclass(frozen=True)
+class SessionListViewState:
+    """UI state snapshot for session list view."""
+
+    selected_session_id: str = ""
+    vertical_scroll: int = 0
 
 
 class SessionListModel(QAbstractListModel):
@@ -124,3 +134,28 @@ class DetailListPanel(QWidget):
         selected = menu.exec(self._list.viewport().mapToGlobal(pos))
         if selected == show_action:
             show_in_file_manager(session.file_path, parent_dir=True)
+
+    def capture_view_state(self) -> SessionListViewState:
+        """Capture current session selection + scroll position."""
+        selected_session_id = ""
+        index = self._list.currentIndex()
+        if index.isValid():
+            session = self._model.session_at(index.row())
+            if session is not None:
+                selected_session_id = session.session_id
+        scroll = self._list.verticalScrollBar().value()
+        return SessionListViewState(
+            selected_session_id=selected_session_id,
+            vertical_scroll=scroll,
+        )
+
+    def restore_view_state(self, state: SessionListViewState) -> None:
+        """Restore session selection + scroll position."""
+        if state.selected_session_id:
+            for row in range(self._model.rowCount()):
+                index = self._model.index(row, 0)
+                session_id = self._model.data(index, Qt.ItemDataRole.UserRole)
+                if session_id == state.selected_session_id:
+                    self._list.setCurrentIndex(index)
+                    break
+        self._list.verticalScrollBar().setValue(max(0, state.vertical_scroll))

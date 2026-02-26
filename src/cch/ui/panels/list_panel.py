@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PySide6.QtCore import (
     QAbstractListModel,
     QModelIndex,
@@ -27,6 +29,14 @@ from cch.ui.theme import COLORS, provider_color, provider_label
 from cch.ui.widgets.delegates import ProjectDelegate
 
 _PROVIDERS = ("claude", "codex", "gemini")
+
+
+@dataclass(frozen=True)
+class ProjectListViewState:
+    """UI state snapshot for project list view."""
+
+    selected_project_id: str = ""
+    vertical_scroll: int = 0
 
 
 class ProjectListModel(QAbstractListModel):
@@ -213,6 +223,31 @@ class ListPanel(QWidget):
         selected = menu.exec(self._list.viewport().mapToGlobal(pos))
         if selected == show_action:
             show_in_file_manager(project.project_path)
+
+    def capture_view_state(self) -> ProjectListViewState:
+        """Capture current project selection + scroll position."""
+        selected_project_id = ""
+        index = self._list.currentIndex()
+        if index.isValid():
+            project = self._model.project_at(index.row())
+            if project is not None:
+                selected_project_id = project.project_id
+        scroll = self._list.verticalScrollBar().value()
+        return ProjectListViewState(
+            selected_project_id=selected_project_id,
+            vertical_scroll=scroll,
+        )
+
+    def restore_view_state(self, state: ProjectListViewState) -> None:
+        """Restore project selection + scroll position."""
+        if state.selected_project_id:
+            for row in range(self._model.rowCount()):
+                index = self._model.index(row, 0)
+                project_id = self._model.data(index, Qt.ItemDataRole.UserRole)
+                if project_id == state.selected_project_id:
+                    self._list.setCurrentIndex(index)
+                    break
+        self._list.verticalScrollBar().setValue(max(0, state.vertical_scroll))
 
 
 def _provider_chip_style(provider: str, active: bool) -> str:

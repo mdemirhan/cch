@@ -95,6 +95,8 @@ class CCHMainWindow(QMainWindow):
         self._current_nav = "history"
         self._session_focus_mode = False
         self._pre_focus_splitter_state: QByteArray | None = None
+        self._pre_focus_project_list_state = self._list_panel.capture_view_state()
+        self._pre_focus_session_list_state = self._detail_panel.capture_view_state()
         self._force_exit_timer = QTimer(self)
         self._force_exit_timer.setSingleShot(True)
         self._force_exit_timer.timeout.connect(lambda: os._exit(0))
@@ -143,9 +145,10 @@ class CCHMainWindow(QMainWindow):
     def _apply_nav_visibility(self, name: str) -> None:
         """Update panel visibility and active content for the selected nav."""
         if name == "history":
-            show_lists = not self._session_focus_mode
-            self._list_panel.setVisible(show_lists)
-            self._detail_panel.setVisible(show_lists)
+            # Keep panes visible in history mode so their internal selection/scroll
+            # state is preserved; focus mode collapses width via splitter sizes.
+            self._list_panel.setVisible(True)
+            self._detail_panel.setVisible(True)
             self._content_panel.show_history()
         elif name == "search":
             self._list_panel.setVisible(False)
@@ -170,10 +173,10 @@ class CCHMainWindow(QMainWindow):
         if self._current_nav != "history" or not self._content_panel.is_history_active():
             return
         self._pre_focus_splitter_state = self._splitter.saveState()
+        self._pre_focus_project_list_state = self._list_panel.capture_view_state()
+        self._pre_focus_session_list_state = self._detail_panel.capture_view_state()
         self._session_focus_mode = True
         self._sidebar.set_pane_collapsed(True)
-        self._list_panel.setVisible(False)
-        self._detail_panel.setVisible(False)
         self._splitter.setSizes([0, 0, max(1, self._splitter.width())])
         self._status_bar.showMessage(
             "Session focus mode enabled. Press Esc to restore.",
@@ -190,6 +193,8 @@ class CCHMainWindow(QMainWindow):
             self._splitter.restoreState(self._pre_focus_splitter_state)
             self._pre_focus_splitter_state = None
         self._apply_nav_visibility(self._current_nav)
+        self._list_panel.restore_view_state(self._pre_focus_project_list_state)
+        self._detail_panel.restore_view_state(self._pre_focus_session_list_state)
         self._status_bar.showMessage("Session focus mode disabled.", 1500)
 
     def _zoom_in_session(self) -> None:
