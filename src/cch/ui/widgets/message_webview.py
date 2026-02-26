@@ -32,6 +32,9 @@ from cch.ui.widgets.message_widget import render_message_html
 
 _INLINE_CONTENT_LIMIT_BYTES = 1_500_000
 _MAX_DATA_URL_LENGTH = 1_900_000
+_MIN_ZOOM_FACTOR = 0.6
+_MAX_ZOOM_FACTOR = 2.4
+_ZOOM_STEP = 0.1
 logger = logging.getLogger(__name__)
 
 
@@ -214,6 +217,8 @@ class MessageWebView(QWidget):
             logger.debug("Failed creating webview temp marker: %s", marker, exc_info=True)
         self._temp_files: list[Path] = []
         self._webview.loadFinished.connect(self._on_load_finished)
+        self._zoom_factor = 1.0
+        self._webview.setZoomFactor(self._zoom_factor)
 
     def show_session(self, detail: SessionDetail, *, focus_message_uuid: str = "") -> None:
         """Render the full session (header + filters + messages)."""
@@ -361,6 +366,24 @@ class MessageWebView(QWidget):
     def scroll_to_bottom(self) -> None:
         """Scroll to the bottom of the conversation."""
         self._webview.page().runJavaScript("scrollToBottom()")
+
+    def zoom_in(self) -> float:
+        """Increase webview zoom and return the new factor."""
+        return self._set_zoom(self._zoom_factor + _ZOOM_STEP)
+
+    def zoom_out(self) -> float:
+        """Decrease webview zoom and return the new factor."""
+        return self._set_zoom(self._zoom_factor - _ZOOM_STEP)
+
+    def reset_zoom(self) -> float:
+        """Reset webview zoom to default and return the new factor."""
+        return self._set_zoom(1.0)
+
+    def _set_zoom(self, factor: float) -> float:
+        clamped = max(_MIN_ZOOM_FACTOR, min(_MAX_ZOOM_FACTOR, factor))
+        self._zoom_factor = round(clamped, 2)
+        self._webview.setZoomFactor(self._zoom_factor)
+        return self._zoom_factor
 
     def dispose(self) -> None:
         """Release webview resources during app shutdown."""

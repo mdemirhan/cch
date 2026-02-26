@@ -18,6 +18,8 @@ class NavSidebar(QWidget):
     """Vertical sidebar for top-level navigation."""
 
     nav_changed = Signal(str)
+    pane_toggle_requested = Signal()
+    keys_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -56,6 +58,26 @@ class NavSidebar(QWidget):
 
         layout.addStretch()
 
+        self._pane_btn = QPushButton("Focus")
+        self._pane_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarShadeButton))
+        self._pane_btn.setIconSize(QSize(14, 14))
+        self._pane_btn.setFixedSize(80, 34)
+        self._pane_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._pane_btn.setStyleSheet(self._toolbar_button_style())
+        self._pane_btn.setToolTip("Focus session detail (Ctrl+Shift+M / F11)")
+        self._pane_btn.clicked.connect(self.pane_toggle_requested.emit)
+        layout.addWidget(self._pane_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self._keys_btn = QPushButton("Keys")
+        self._keys_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
+        self._keys_btn.setIconSize(QSize(14, 14))
+        self._keys_btn.setFixedSize(80, 34)
+        self._keys_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._keys_btn.setStyleSheet(self._toolbar_button_style())
+        self._keys_btn.setToolTip("Show keyboard shortcuts")
+        self._keys_btn.clicked.connect(self.keys_requested.emit)
+        layout.addWidget(self._keys_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
         # Select history by default
         self.select_nav("history")
 
@@ -70,6 +92,21 @@ class NavSidebar(QWidget):
             btn.setChecked(is_active)
             btn.setStyleSheet(self._button_style(is_active))
         self.nav_changed.emit(name)
+
+    def set_pane_collapsed(self, collapsed: bool) -> None:
+        """Update pane toggle button label to reflect current state."""
+        if collapsed:
+            self._pane_btn.setText("Unfocus")
+            self._pane_btn.setIcon(
+                self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarUnshadeButton)
+            )
+            self._pane_btn.setToolTip("Return to full panes layout (Esc)")
+        else:
+            self._pane_btn.setText("Focus")
+            self._pane_btn.setIcon(
+                self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarShadeButton)
+            )
+            self._pane_btn.setToolTip("Focus session detail (Ctrl+Shift+M / F11)")
 
     @staticmethod
     def _button_style(active: bool) -> str:
@@ -99,4 +136,25 @@ class NavSidebar(QWidget):
                 f"  border-color: {COLORS['border']}; "
                 f"  color: {COLORS['text']}; "
                 f"}}"
+        )
+
+    @staticmethod
+    def _toolbar_button_style() -> str:
+        """Return QSS for bottom toolbar-style action buttons."""
+        return (
+            f"QPushButton {{ "
+            "  background-color: #FFFFFF; "
+            f"  color: {COLORS['text']}; "
+            f"  border: 1px solid {COLORS['border']}; "
+            "  border-radius: 8px; "
+            "  font-size: 11px; font-weight: 600; "
+            "  text-align: left; padding: 6px 8px; "
+            f"}} "
+            f"QPushButton:hover {{ "
+            "  background-color: #FBFCFD; "
+            f"  border-color: {COLORS['primary']}; "
+            f"}} "
+            f"QPushButton:pressed {{ "
+            "  background-color: #F3F6F8; "
+            f"}}"
         )

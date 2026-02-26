@@ -96,6 +96,22 @@ class ContentPanel(QStackedWidget):
         self.setCurrentWidget(self._search_view)
         self._search_view.focus_input()
 
+    def is_history_active(self) -> bool:
+        """Return True when the history/session view is currently shown."""
+        return self.currentWidget() is self._history_view
+
+    def zoom_in_session(self) -> float:
+        """Increase session detail zoom and return the new factor."""
+        return self._history_view.zoom_in()
+
+    def zoom_out_session(self) -> float:
+        """Decrease session detail zoom and return the new factor."""
+        return self._history_view.zoom_out()
+
+    def reset_session_zoom(self) -> float:
+        """Reset session detail zoom and return the new factor."""
+        return self._history_view.reset_zoom()
+
     def dispose(self) -> None:
         """Release child view resources for shutdown."""
         self._history_view.dispose()

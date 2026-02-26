@@ -7,13 +7,14 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QByteArray, QSettings, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QSplitter,
     QStatusBar,
     QWidget,
@@ -91,15 +92,21 @@ class CCHMainWindow(QMainWindow):
         self._shutdown_in_progress = False
         self._project_request_generation = 0
         self._session_request_generation = 0
+        self._current_nav = "history"
+        self._session_focus_mode = False
+        self._pre_focus_splitter_state: QByteArray | None = None
         self._force_exit_timer = QTimer(self)
         self._force_exit_timer.setSingleShot(True)
         self._force_exit_timer.timeout.connect(lambda: os._exit(0))
 
         # ── Wire signals ──
         self._sidebar.nav_changed.connect(self._on_nav_changed)
+        self._sidebar.pane_toggle_requested.connect(self._toggle_session_focus_mode)
+        self._sidebar.keys_requested.connect(self._show_shortcuts_dialog)
         self._list_panel.project_selected.connect(self._on_project_selected)
         self._detail_panel.session_selected.connect(self._on_session_selected)
         self._content_panel.session_requested.connect(self._on_session_selected)
+        self._sidebar.set_pane_collapsed(False)
 
         # ── Keyboard shortcuts ──
         self._setup_shortcuts()
@@ -114,12 +121,31 @@ class CCHMainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+1"), self, lambda: self._sidebar.select_nav("history"))
         QShortcut(QKeySequence("Ctrl+2"), self, lambda: self._sidebar.select_nav("search"))
         QShortcut(QKeySequence("Ctrl+3"), self, lambda: self._sidebar.select_nav("statistics"))
+        QShortcut(QKeySequence("F11"), self, self._toggle_session_focus_mode)
+        QShortcut(QKeySequence("Ctrl+Shift+M"), self, self._toggle_session_focus_mode)
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self._exit_session_focus_mode)
+        QShortcut(QKeySequence("Ctrl++"), self, self._zoom_in_session)
+        QShortcut(QKeySequence("Ctrl+="), self, self._zoom_in_session)
+        QShortcut(QKeySequence("Ctrl+-"), self, self._zoom_out_session)
+        QShortcut(QKeySequence("Ctrl+0"), self, self._reset_session_zoom)
 
     def _on_nav_changed(self, name: str) -> None:
         """Handle sidebar navigation change."""
+        self._current_nav = name
+        if self._session_focus_mode:
+            if name != "history":
+                self._exit_session_focus_mode()
+            else:
+                self._content_panel.show_history()
+                return
+        self._apply_nav_visibility(name)
+
+    def _apply_nav_visibility(self, name: str) -> None:
+        """Update panel visibility and active content for the selected nav."""
         if name == "history":
-            self._list_panel.setVisible(True)
-            self._detail_panel.setVisible(True)
+            show_lists = not self._session_focus_mode
+            self._list_panel.setVisible(show_lists)
+            self._detail_panel.setVisible(show_lists)
             self._content_panel.show_history()
         elif name == "search":
             self._list_panel.setVisible(False)
@@ -129,6 +155,82 @@ class CCHMainWindow(QMainWindow):
             self._list_panel.setVisible(False)
             self._detail_panel.setVisible(False)
             self._content_panel.show_statistics()
+
+    def _toggle_session_focus_mode(self) -> None:
+        """Toggle session-detail focus mode for history view."""
+        if self._session_focus_mode:
+            self._exit_session_focus_mode()
+            return
+        self._enter_session_focus_mode()
+
+    def _enter_session_focus_mode(self) -> None:
+        """Hide side panels so session detail fills the available window."""
+        if self._session_focus_mode:
+            return
+        if self._current_nav != "history" or not self._content_panel.is_history_active():
+            return
+        self._pre_focus_splitter_state = self._splitter.saveState()
+        self._session_focus_mode = True
+        self._sidebar.set_pane_collapsed(True)
+        self._list_panel.setVisible(False)
+        self._detail_panel.setVisible(False)
+        self._splitter.setSizes([0, 0, max(1, self._splitter.width())])
+        self._status_bar.showMessage(
+            "Session focus mode enabled. Press Esc to restore.",
+            2500,
+        )
+
+    def _exit_session_focus_mode(self) -> None:
+        """Restore pre-focus layout after session detail focus mode."""
+        if not self._session_focus_mode:
+            return
+        self._session_focus_mode = False
+        self._sidebar.set_pane_collapsed(False)
+        if self._pre_focus_splitter_state is not None:
+            self._splitter.restoreState(self._pre_focus_splitter_state)
+            self._pre_focus_splitter_state = None
+        self._apply_nav_visibility(self._current_nav)
+        self._status_bar.showMessage("Session focus mode disabled.", 1500)
+
+    def _zoom_in_session(self) -> None:
+        """Increase session detail zoom when history view is active."""
+        if self._current_nav != "history" or not self._content_panel.is_history_active():
+            return
+        factor = self._content_panel.zoom_in_session()
+        self._status_bar.showMessage(f"Zoom: {factor:.0%}", 1200)
+
+    def _zoom_out_session(self) -> None:
+        """Decrease session detail zoom when history view is active."""
+        if self._current_nav != "history" or not self._content_panel.is_history_active():
+            return
+        factor = self._content_panel.zoom_out_session()
+        self._status_bar.showMessage(f"Zoom: {factor:.0%}", 1200)
+
+    def _reset_session_zoom(self) -> None:
+        """Reset session detail zoom when history view is active."""
+        if self._current_nav != "history" or not self._content_panel.is_history_active():
+            return
+        factor = self._content_panel.reset_session_zoom()
+        self._status_bar.showMessage(f"Zoom: {factor:.0%}", 1200)
+
+    def _show_shortcuts_dialog(self) -> None:
+        """Show keyboard shortcuts help."""
+        QMessageBox.information(
+            self,
+            "Keyboard Shortcuts",
+            "\n".join(
+                [
+                    "Ctrl+1: Projects view",
+                    "Ctrl+2: Search view",
+                    "Ctrl+3: Stats view",
+                    "Ctrl+Shift+M or F11: Focus/unfocus session detail",
+                    "Esc: Exit focus mode",
+                    "Ctrl++ or Ctrl+=: Zoom in session detail",
+                    "Ctrl+-: Zoom out session detail",
+                    "Ctrl+0: Reset session detail zoom",
+                ]
+            ),
+        )
 
     @async_slot
     async def _on_project_selected(self, project_id: str) -> None:
@@ -229,6 +331,9 @@ class CCHMainWindow(QMainWindow):
         Attempt graceful shutdown first; force-exit as a fallback if
         QWebEngine/Qt teardown gets stuck.
         """
+        if self._session_focus_mode:
+            self._exit_session_focus_mode()
+
         settings = QSettings("CCH", "ClaudeCodeHistory")
         settings.setValue("geometry", self.saveGeometry())
         settings.setValue("splitter", self._splitter.saveState())

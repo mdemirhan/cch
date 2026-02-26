@@ -30,6 +30,18 @@ class HistoryView(QWidget):
         """Display a full session."""
         self._webview.show_session(detail, focus_message_uuid=focus_message_uuid)
 
+    def zoom_in(self) -> float:
+        """Increase conversation zoom and return new factor."""
+        return self._webview.zoom_in()
+
+    def zoom_out(self) -> float:
+        """Decrease conversation zoom and return new factor."""
+        return self._webview.zoom_out()
+
+    def reset_zoom(self) -> float:
+        """Reset conversation zoom and return new factor."""
+        return self._webview.reset_zoom()
+
     def dispose(self) -> None:
         """Release webview resources during shutdown."""
         self._webview.dispose()
