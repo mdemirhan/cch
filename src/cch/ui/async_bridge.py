@@ -38,7 +38,7 @@ def async_slot[**P, T](
     @functools.wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> None:
         coro = func(*args, **kwargs)
-        future = asyncio.create_task(coro)
+        future = _create_task(coro)
         _SCHEDULED_TASKS.add(future)
         future.add_done_callback(_discard_task)
         future.add_done_callback(_log_exception)
@@ -56,8 +56,8 @@ def _log_exception(future: asyncio.Future[Any]) -> None:
 
 
 def schedule[T](coro: Coroutine[Any, Any, T]) -> asyncio.Future[T]:
-    """Schedule an async coroutine on the running event loop."""
-    task: asyncio.Task[T] = asyncio.create_task(coro)
+    """Schedule an async coroutine on the configured event loop."""
+    task: asyncio.Task[T] = _create_task(coro)
     _SCHEDULED_TASKS.add(task)
     task.add_done_callback(_discard_task)
     task.add_done_callback(_log_exception)
@@ -66,7 +66,10 @@ def schedule[T](coro: Coroutine[Any, Any, T]) -> asyncio.Future[T]:
 
 def cancel_all_tasks() -> None:
     """Cancel all tracked outstanding tasks."""
-    current = asyncio.current_task()
+    try:
+        current = asyncio.current_task()
+    except RuntimeError:
+        current = None
     for task in list(_SCHEDULED_TASKS):
         if task is current:
             continue
@@ -75,3 +78,12 @@ def cancel_all_tasks() -> None:
 
 def _discard_task(task: asyncio.Future[Any]) -> None:
     _SCHEDULED_TASKS.discard(task)  # type: ignore[arg-type]
+
+
+def _create_task[T](coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
+    """Create a task on the running loop, or the installed default loop."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
+    return loop.create_task(coro)
