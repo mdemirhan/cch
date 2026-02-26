@@ -29,7 +29,7 @@ class TestSearchEngine:
     async def test_search_with_role_filter(self, indexed_db: Database) -> None:
         engine = SearchEngine(indexed_db)
 
-        user_results = await engine.search("bug", role="user")
+        user_results = await engine.search("bug", roles=["user"])
         assert user_results.total_count >= 1
 
     @pytest.mark.asyncio

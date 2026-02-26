@@ -4,8 +4,11 @@ version = "0.1.0"
 description = "Claude Code History — Interactive dashboard for Claude Code session data"
 requires-python = ">=3.13"
 dependencies = [
-    "nicegui>=3.7.0",
-    "plotly>=6.0.0",
+    "PySide6>=6.8.0",
+    "qasync>=0.27.1",
+    "matplotlib>=3.10.0",
+    "markdown>=3.7",
+    "pygments>=2.19.0",
     "pydantic>=2.10.0",
     "typer>=0.12.0",
     "aiosqlite>=0.21.0",
@@ -44,7 +47,7 @@ select = ["E", "F", "I", "N", "UP", "B", "A", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]
-"src/cch/ui/*" = ["SIM117"]
+"src/cch/ui/*" = ["SIM117", "N802", "B008"]
 
 [tool.basedpyright]
 pythonVersion = "3.13"

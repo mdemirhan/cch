@@ -1,1 +1,1 @@
-"""NiceGUI UI layer for CCH."""
+"""PySide6 UI layer for CCH."""

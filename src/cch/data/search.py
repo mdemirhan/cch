@@ -19,7 +19,7 @@ class SearchEngine:
     async def search(
         self,
         query: str,
-        role: str = "",
+        roles: list[str] | None = None,
         project_id: str = "",
         limit: int = 50,
         offset: int = 0,
@@ -28,7 +28,8 @@ class SearchEngine:
 
         Args:
             query: Full-text search query.
-            role: Filter by role (user/assistant). Empty for all.
+            roles: Filter by categories. Valid values: "user", "assistant",
+                   "system". None or empty means all.
             project_id: Filter by project. Empty for all.
             limit: Maximum results to return.
             offset: Result offset for pagination.
@@ -45,9 +46,17 @@ class SearchEngine:
         conditions: list[str] = []
         params: list[str | int] = [fts_query]
 
-        if role:
-            conditions.append("m.role = ?")
-            params.append(role)
+        if roles:
+            role_clauses: list[str] = []
+            for r in roles:
+                if r == "user":
+                    role_clauses.append("m.role = 'user'")
+                elif r == "assistant":
+                    role_clauses.append("m.role = 'assistant'")
+                elif r == "system":
+                    role_clauses.append("m.type IN ('system', 'summary')")
+            if role_clauses:
+                conditions.append("(" + " OR ".join(role_clauses) + ")")
 
         if project_id:
             conditions.append("s.project_id = ?")

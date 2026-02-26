@@ -13,24 +13,23 @@ from cch.config import Config
 app = typer.Typer(
     name="cch",
     help="Claude Code History — Interactive dashboard for Claude Code session data.",
-    no_args_is_help=True,
+    invoke_without_command=True,
 )
 
 
-@app.command()
+@app.callback(invoke_without_command=True)
 def serve(
+    ctx: typer.Context,
     claude_dir: Annotated[
         Path | None,
         typer.Option("--claude-dir", help="Path to Claude data directory"),
     ] = None,
-    port: Annotated[int, typer.Option("--port", help="Server port")] = 8765,
-    host: Annotated[str, typer.Option("--host", help="Server host")] = "127.0.0.1",
 ) -> None:
-    """Start the CCH dashboard server."""
+    """Start the CCH desktop application."""
+    if ctx.invoked_subcommand is not None:
+        return
     config = Config(
         claude_dir=claude_dir or Path.home() / ".claude",
-        port=port,
-        host=host,
     )
     from cch.ui.app import run_app
 

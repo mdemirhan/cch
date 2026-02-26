@@ -54,7 +54,7 @@ class SearchServiceProtocol(Protocol):
     async def search(
         self,
         query: str,
-        role: str = "",
+        roles: list[str] | None = None,
         project_id: str = "",
         limit: int = 50,
         offset: int = 0,

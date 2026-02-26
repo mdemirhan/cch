@@ -10,8 +10,6 @@ class Config:
 
     claude_dir: Path = field(default_factory=lambda: Path.home() / ".claude")
     cache_dir: Path = field(default_factory=lambda: Path.home() / ".cache" / "cch")
-    port: int = 8765
-    host: str = "127.0.0.1"
 
     @property
     def projects_dir(self) -> Path:

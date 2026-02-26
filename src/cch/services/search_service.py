@@ -21,7 +21,7 @@ class SearchService:
     async def search(
         self,
         query: str,
-        role: str = "",
+        roles: list[str] | None = None,
         project_id: str = "",
         limit: int = 50,
         offset: int = 0,
@@ -31,7 +31,7 @@ class SearchService:
             return Err("Search query cannot be empty")
         try:
             results = await self._engine.search(
-                query=query, role=role, project_id=project_id, limit=limit, offset=offset
+                query=query, roles=roles, project_id=project_id, limit=limit, offset=offset
             )
             return Ok(results)
         except Exception as exc:

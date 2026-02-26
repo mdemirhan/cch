@@ -57,12 +57,12 @@ class Indexer:
         total = len(sessions)
 
         for i, session in enumerate(sessions):
-            if progress_callback:
-                progress_callback(i, total, f"Indexing {session.session_id[:8]}...")
-
             if not force and not await self._needs_reindex(session):
                 result.files_skipped += 1
                 continue
+
+            if progress_callback:
+                progress_callback(i, total, f"Indexing {session.session_id[:8]}...")
 
             try:
                 msg_count = await self._index_session(session)
