@@ -133,7 +133,7 @@ class TestParseSessionFile:
                 "payload": {
                     "type": "function_call",
                     "name": "shell",
-                    "arguments": "{\"command\": [\"ls\"]}",
+                    "arguments": '{"command": ["ls"]}',
                     "call_id": "call-1",
                 },
             },

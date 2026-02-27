@@ -164,7 +164,10 @@ def test_small_scalar_helpers() -> None:
     assert _tool_use_search_text(tool_use) == 'Edit\n{"k":1}'
     assert _tool_use_search_text(ToolUseBlock(tool_use_id="", name="", input_json="x")) == "x"
 
-    assert _first_text([ContentBlock(type="text", text=""), ContentBlock(type="text", text="x")]) == "x"
+    assert (
+        _first_text([ContentBlock(type="text", text=""), ContentBlock(type="text", text="x")])
+        == "x"
+    )
 
     assert _safe_json_string("  data  ") == "data"
     assert _safe_json_string(None) == "{}"

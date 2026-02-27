@@ -89,7 +89,9 @@ def test_async_bridge_create_event_loop(monkeypatch) -> None:
         return FakeLoop()
 
     monkeypatch.setattr("cch.ui.async_bridge.QEventLoop", fake_qeventloop)
-    monkeypatch.setattr("cch.ui.async_bridge.asyncio.set_event_loop", lambda loop: created.setdefault("loop", loop))
+    monkeypatch.setattr(
+        "cch.ui.async_bridge.asyncio.set_event_loop", lambda loop: created.setdefault("loop", loop)
+    )
     loop = async_bridge.create_event_loop(object())  # type: ignore[arg-type]
     assert isinstance(loop, FakeLoop)
     assert created["loop"] is loop

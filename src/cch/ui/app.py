@@ -330,9 +330,7 @@ class CCHMainWindow(QMainWindow):
         self._status_label.setText(f"{label}: preparing...")
         result = await self._services.indexer.index_all(
             force=force,
-            progress_callback=lambda c, t, m: self._status_label.setText(
-                f"{label}: {c}/{t} {m}"
-            ),
+            progress_callback=lambda c, t, m: self._status_label.setText(f"{label}: {c}/{t} {m}"),
         )
         logger.info("Indexing complete: %s", result)
         self._show_transient_status(

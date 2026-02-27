@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from result import Ok
 
 from cch.models.categories import CATEGORY_FILTERS, DEFAULT_ACTIVE_CATEGORY_KEYS
-from cch.models.search import SearchResult
+from cch.models.search import SearchResult, SearchResultRoles
 from cch.ui.async_bridge import async_slot
 from cch.ui.theme import COLORS, provider_color, provider_label
 from cch.ui.widgets.delegates import SearchResultDelegate
@@ -64,15 +64,15 @@ class SearchResultModel(QAbstractListModel):
         r = self._results[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
             return r.snippet
-        if role == Qt.ItemDataRole.UserRole:
+        if role == SearchResultRoles.SESSION_ID:
             return r.session_id
-        if role == Qt.ItemDataRole.UserRole + 1:
+        if role == SearchResultRoles.MESSAGE_TYPE:
             return r.message_type
-        if role == Qt.ItemDataRole.UserRole + 2:
+        if role == SearchResultRoles.PROJECT_NAME:
             return r.project_name
-        if role == Qt.ItemDataRole.UserRole + 3:
+        if role == SearchResultRoles.TIMESTAMP:
             return r.timestamp
-        if role == Qt.ItemDataRole.UserRole + 4:
+        if role == SearchResultRoles.PROVIDER:
             return r.provider
         return None
 
@@ -156,9 +156,7 @@ class SearchView(QWidget):
                 active=True,
                 parent=self,
             )
-            chip.toggled.connect(
-                lambda checked, p=provider: self._on_provider_toggled(p, checked)
-            )
+            chip.toggled.connect(lambda checked, p=provider: self._on_provider_toggled(p, checked))
             self._provider_chips[provider] = chip
             project_layout.addWidget(chip)
 

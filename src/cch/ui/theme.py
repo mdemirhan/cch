@@ -268,9 +268,6 @@ def format_relative_time(iso_str: str) -> str:
     now = datetime.now(tz=UTC)
     delta = now - dt
     seconds = int(delta.total_seconds())
-    if seconds <= 0:
-        return "just now"
-
     if seconds < 60:
         return "just now"
     minutes = seconds // 60

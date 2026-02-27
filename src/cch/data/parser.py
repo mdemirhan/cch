@@ -7,7 +7,7 @@ import logging
 from collections.abc import Generator
 from pathlib import Path
 
-from cch.models.categories import normalize_message_type
+from cch.models.categories import MessageType, normalize_message_type
 from cch.models.messages import ContentBlock, ParsedMessage, TokenUsage, ToolUseBlock
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ def _parse_codex_session(path: Path, session_key: str) -> Generator[ParsedMessag
                 parsed = [
                     ParsedMessage(
                         uuid=_fallback_uuid(session_key, sequence),
-                        type="tool_use",
+                        type=MessageType.TOOL_USE,
                         model=current_model,
                         content_blocks=[
                             ContentBlock(
@@ -160,7 +160,7 @@ def _parse_codex_session(path: Path, session_key: str) -> Generator[ParsedMessag
                 parsed = [
                     ParsedMessage(
                         uuid=_fallback_uuid(session_key, sequence),
-                        type="tool_result",
+                        type=MessageType.TOOL_RESULT,
                         model=current_model,
                         content_blocks=[ContentBlock(type="tool_result", text=output)],
                         content_text=output,
@@ -174,7 +174,7 @@ def _parse_codex_session(path: Path, session_key: str) -> Generator[ParsedMessag
                     parsed = [
                         ParsedMessage(
                             uuid=_fallback_uuid(session_key, sequence),
-                            type="thinking",
+                            type=MessageType.THINKING,
                             model=current_model,
                             content_blocks=[ContentBlock(type="thinking", text=thinking_text)],
                             content_text=thinking_text,
@@ -192,8 +192,7 @@ def _parse_codex_session(path: Path, session_key: str) -> Generator[ParsedMessag
 
 def _parse_gemini_session(path: Path, session_key: str) -> Generator[ParsedMessage]:
     try:
-        with open(path, encoding="utf-8") as file:
-            payload = json.load(file)
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         logger.warning("Invalid Gemini JSON file: %s", path)
         return
@@ -357,7 +356,7 @@ def _normalize_parts(
         text = content_text.strip() or _first_text(content_blocks)
         parts.append(
             (
-                "system",
+                MessageType.SYSTEM,
                 [ContentBlock(type="text", text=text)] if text else [],
                 text,
             )
@@ -369,7 +368,7 @@ def _normalize_parts(
                 text = block.text.strip()
                 parts.append(
                     (
-                        "tool_result",
+                        MessageType.TOOL_RESULT,
                         [ContentBlock(type="tool_result", text=text)],
                         text,
                     )
@@ -379,7 +378,7 @@ def _normalize_parts(
                 if text.strip():
                     parts.append(
                         (
-                            "user",
+                            MessageType.USER,
                             [ContentBlock(type="text", text=text)],
                             text,
                         )
@@ -387,7 +386,7 @@ def _normalize_parts(
         if not parts and content_text.strip():
             parts.append(
                 (
-                    "user",
+                    MessageType.USER,
                     [ContentBlock(type="text", text=content_text)],
                     content_text,
                 )
@@ -400,7 +399,7 @@ def _normalize_parts(
                 if text.strip():
                     parts.append(
                         (
-                            "assistant",
+                            MessageType.ASSISTANT,
                             [ContentBlock(type="text", text=text)],
                             text,
                         )
@@ -410,7 +409,7 @@ def _normalize_parts(
                 if text.strip():
                     parts.append(
                         (
-                            "thinking",
+                            MessageType.THINKING,
                             [ContentBlock(type="thinking", text=text)],
                             text,
                         )
@@ -419,7 +418,7 @@ def _normalize_parts(
                 tool_text = _tool_use_search_text(block.tool_use)
                 parts.append(
                     (
-                        "tool_use",
+                        MessageType.TOOL_USE,
                         [ContentBlock(type="tool_use", tool_use=block.tool_use)],
                         tool_text,
                     )
@@ -428,7 +427,7 @@ def _normalize_parts(
                 text = block.text.strip()
                 parts.append(
                     (
-                        "tool_result",
+                        MessageType.TOOL_RESULT,
                         [ContentBlock(type="tool_result", text=text)],
                         text,
                     )
@@ -436,7 +435,7 @@ def _normalize_parts(
         if not parts and content_text.strip():
             parts.append(
                 (
-                    "assistant",
+                    MessageType.ASSISTANT,
                     [ContentBlock(type="text", text=content_text)],
                     content_text,
                 )
@@ -445,14 +444,14 @@ def _normalize_parts(
         text = content_text.strip() or _first_text(content_blocks)
         parts.append(
             (
-                "system",
+                MessageType.SYSTEM,
                 [ContentBlock(type="text", text=text)] if text else [],
                 text,
             )
         )
 
     if not parts:
-        parts.append(("system", [], ""))
+        parts.append((MessageType.SYSTEM, [], ""))
 
     canonical_base = base_uuid or _fallback_uuid(session_key, sequence_start)
     rows: list[ParsedMessage] = []
@@ -585,14 +584,16 @@ def _parse_codex_content(raw_content: object) -> tuple[list[ContentBlock], str]:
 
 
 def _extract_codex_function_output(value: object) -> str:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        output = value.get("output")
-        if isinstance(output, str):
-            return output
-        return json.dumps(value, ensure_ascii=False)
-    return _as_str(value)
+    match value:
+        case str():
+            return value
+        case dict():
+            output = value.get("output")
+            if isinstance(output, str):
+                return output
+            return json.dumps(value, ensure_ascii=False)
+        case _:
+            return _as_str(value)
 
 
 def _extract_codex_reasoning(payload: dict[str, object]) -> str:
@@ -611,71 +612,78 @@ def _extract_codex_reasoning(payload: dict[str, object]) -> str:
 
 
 def _extract_gemini_content_text(content: object) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, dict):
-        return _as_str(content.get("text"))
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-                continue
-            if isinstance(block, dict):
-                text = _as_str(block.get("text"))
-                if text:
-                    parts.append(text)
-        return "\n".join(parts)
-    return ""
+    match content:
+        case str():
+            return content
+        case dict():
+            return _as_str(content.get("text"))
+        case list():
+            parts: list[str] = []
+            for block in content:
+                match block:
+                    case str():
+                        parts.append(block)
+                    case dict():
+                        text = _as_str(block.get("text"))
+                        if text:
+                            parts.append(text)
+            return "\n".join(parts)
+        case _:
+            return ""
 
 
 def _extract_gemini_thoughts(thoughts: object) -> str:
-    if isinstance(thoughts, str):
-        return thoughts
-    if isinstance(thoughts, list):
-        parts: list[str] = []
-        for item in thoughts:
-            if isinstance(item, str):
-                parts.append(item)
-        return "\n".join(parts)
-    return ""
+    match thoughts:
+        case str():
+            return thoughts
+        case list():
+            return "\n".join(item for item in thoughts if isinstance(item, str))
+        case _:
+            return ""
 
 
 def _parse_gemini_usage(tokens: object) -> TokenUsage:
-    if not isinstance(tokens, dict):
-        return TokenUsage()
-    return TokenUsage(
-        input_tokens=_int(tokens.get("input", 0)),
-        output_tokens=_int(tokens.get("output", 0)),
-        cache_read_tokens=_int(tokens.get("cached", 0)),
-        cache_creation_tokens=0,
-    )
+    match tokens:
+        case dict():
+            return TokenUsage(
+                input_tokens=_int(tokens.get("input", 0)),
+                output_tokens=_int(tokens.get("output", 0)),
+                cache_read_tokens=_int(tokens.get("cached", 0)),
+                cache_creation_tokens=0,
+            )
+        case _:
+            return TokenUsage()
 
 
 def _extract_content_text(content: object) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                parts.append(_as_str(item.get("text")))
-            elif isinstance(item, str):
-                parts.append(item)
-        return "\n".join(parts)
-    return _as_str(content)
+    match content:
+        case str():
+            return content
+        case list():
+            parts: list[str] = []
+            for item in content:
+                match item:
+                    case dict() if item.get("type") == "text":
+                        parts.append(_as_str(item.get("text")))
+                    case str():
+                        parts.append(item)
+            return "\n".join(parts)
+        case _:
+            return _as_str(content)
 
 
 def _safe_json_string(value: object) -> str:
-    if isinstance(value, str):
-        stripped = value.strip()
-        return stripped or "{}"
-    if value is None:
-        return "{}"
-    try:
-        return json.dumps(value, ensure_ascii=False)
-    except TypeError:
-        return "{}"
+    match value:
+        case str():
+            stripped = value.strip()
+            return stripped or "{}"
+        case None:
+            return "{}"
+        case _:
+            try:
+                return json.dumps(value, ensure_ascii=False)
+            except TypeError:
+                return "{}"
 
 
 def _fallback_uuid(session_key: str, seq: int) -> str:
@@ -687,7 +695,11 @@ def _fallback_tool_id(session_key: str, seq: int) -> str:
 
 
 def _as_str(value: object) -> str:
-    return value if isinstance(value, str) else ""
+    match value:
+        case str():
+            return value
+        case _:
+            return ""
 
 
 def _as_optional_str(value: object) -> str | None:
@@ -697,15 +709,17 @@ def _as_optional_str(value: object) -> str | None:
 
 
 def _int(val: object) -> int:
-    if isinstance(val, bool):
-        return int(val)
-    if isinstance(val, int):
-        return val
-    if isinstance(val, float):
-        return int(val)
-    if isinstance(val, str):
-        try:
-            return int(float(val))
-        except ValueError:
+    match val:
+        case bool():
+            return int(val)
+        case int():
+            return val
+        case float():
+            return int(val)
+        case str():
+            try:
+                return int(float(val))
+            except ValueError:
+                return 0
+        case _:
             return 0
-    return 0

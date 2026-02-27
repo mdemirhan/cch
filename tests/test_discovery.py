@@ -96,7 +96,9 @@ class TestDiscoveryHelpers:
         path = tmp_path / "s.jsonl"
         path.write_text("{}", encoding="utf-8")
         expected_suffix = hashlib.sha1(str(path).encode("utf-8")).hexdigest()[:8]
-        assert _provider_session_id("codex", "abc", file_path=path) == f"codex:abc:{expected_suffix}"
+        assert (
+            _provider_session_id("codex", "abc", file_path=path) == f"codex:abc:{expected_suffix}"
+        )
 
     def test_scan_codex_metadata(self, provider_data_root: Path) -> None:
         codex_path = (

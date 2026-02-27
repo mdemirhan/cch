@@ -81,11 +81,6 @@ class ContentPanel(QStackedWidget):
         )
         self.setCurrentWidget(self._history_view)
 
-    def focus_search(self) -> None:
-        """Focus the search input."""
-        self.setCurrentWidget(self._search_view)
-        self._search_view.focus_input()
-
     def is_history_active(self) -> bool:
         """Return True when the history/session view is currently shown."""
         return self.currentWidget() is self._history_view

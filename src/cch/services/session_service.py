@@ -6,6 +6,7 @@ from result import Err, Ok, Result
 
 from cch.data.repositories import SessionRepository
 from cch.models.sessions import MessageView, SessionDetail, SessionSummary, ToolCallView
+from cch.services._row_helpers import row_int, row_str
 
 
 class SessionService:
@@ -57,23 +58,13 @@ class SessionService:
             return Err(f"Session {session_id} not found")
 
         normalized_offset = max(offset, 0)
-        normalized_limit: int | None = None
-        if limit is not None:
-            normalized_limit = max(limit, 1)
+        normalized_limit = max(limit, 1) if limit is not None else None
 
-        # Fetch only the requested message window (or everything if no limit provided).
-        if normalized_limit is None:
-            msg_rows = await self._repo.get_message_rows(
-                session_id,
-                limit=None,
-                offset=normalized_offset,
-            )
-        else:
-            msg_rows = await self._repo.get_message_rows(
-                session_id,
-                limit=normalized_limit,
-                offset=normalized_offset,
-            )
+        msg_rows = await self._repo.get_message_rows(
+            session_id,
+            limit=normalized_limit,
+            offset=normalized_offset,
+        )
 
         # Fetch only tool calls for the visible messages.
         tc_rows = []
@@ -113,34 +104,8 @@ class SessionService:
             for m in msg_rows
         ]
 
-        return Ok(
-            SessionDetail(
-                session_id=row["session_id"],
-                provider=row["provider"] or "claude",
-                file_path=row["file_path"] or "",
-                project_id=row["project_id"] or "",
-                project_name=row["project_name"] or "",
-                first_prompt=row["first_prompt"] or "",
-                summary=row["summary"] or "",
-                message_count=row["message_count"] or 0,
-                user_message_count=row["user_message_count"] or 0,
-                assistant_message_count=row["assistant_message_count"] or 0,
-                tool_call_count=row["tool_call_count"] or 0,
-                total_input_tokens=row["total_input_tokens"] or 0,
-                total_output_tokens=row["total_output_tokens"] or 0,
-                total_cache_read_tokens=row["total_cache_read_tokens"] or 0,
-                total_cache_creation_tokens=row["total_cache_creation_tokens"] or 0,
-                model=row["model"] or "",
-                models_used=row["models_used"] or "",
-                git_branch=row["git_branch"] or "",
-                cwd=row["cwd"] or "",
-                created_at=row["created_at"] or "",
-                modified_at=row["modified_at"] or "",
-                duration_ms=row["duration_ms"] or 0,
-                is_sidechain=bool(row["is_sidechain"]),
-                messages=messages,
-            )
-        )
+        summary = _row_to_summary(row)
+        return Ok(SessionDetail(**summary.model_dump(), messages=messages))
 
     async def get_message_offset(self, session_id: str, message_uuid: str) -> int | None:
         """Return the 0-based sequence offset for a message within a session."""
@@ -157,37 +122,28 @@ class SessionService:
 def _row_to_summary(row: object) -> SessionSummary:
     """Convert a database row to SessionSummary."""
     r: dict[str, object] = dict(row)  # type: ignore[arg-type]
-
-    def _s(key: str) -> str:
-        v = r.get(key, "")
-        return str(v) if v else ""
-
-    def _i(key: str) -> int:
-        v = r.get(key, 0)
-        return int(v) if v else 0  # type: ignore[arg-type]
-
     return SessionSummary(
-        session_id=_s("session_id"),
-        provider=_s("provider") or "claude",
-        file_path=_s("file_path"),
-        project_id=_s("project_id"),
-        project_name=_s("project_name"),
-        first_prompt=_s("first_prompt"),
-        summary=_s("summary"),
-        message_count=_i("message_count"),
-        user_message_count=_i("user_message_count"),
-        assistant_message_count=_i("assistant_message_count"),
-        tool_call_count=_i("tool_call_count"),
-        total_input_tokens=_i("total_input_tokens"),
-        total_output_tokens=_i("total_output_tokens"),
-        total_cache_read_tokens=_i("total_cache_read_tokens"),
-        total_cache_creation_tokens=_i("total_cache_creation_tokens"),
-        model=_s("model"),
-        models_used=_s("models_used"),
-        git_branch=_s("git_branch"),
-        cwd=_s("cwd"),
-        created_at=_s("created_at"),
-        modified_at=_s("modified_at"),
-        duration_ms=_i("duration_ms"),
+        session_id=row_str(r, "session_id"),
+        provider=row_str(r, "provider", "claude"),
+        file_path=row_str(r, "file_path"),
+        project_id=row_str(r, "project_id"),
+        project_name=row_str(r, "project_name"),
+        first_prompt=row_str(r, "first_prompt"),
+        summary=row_str(r, "summary"),
+        message_count=row_int(r, "message_count"),
+        user_message_count=row_int(r, "user_message_count"),
+        assistant_message_count=row_int(r, "assistant_message_count"),
+        tool_call_count=row_int(r, "tool_call_count"),
+        total_input_tokens=row_int(r, "total_input_tokens"),
+        total_output_tokens=row_int(r, "total_output_tokens"),
+        total_cache_read_tokens=row_int(r, "total_cache_read_tokens"),
+        total_cache_creation_tokens=row_int(r, "total_cache_creation_tokens"),
+        model=row_str(r, "model"),
+        models_used=row_str(r, "models_used"),
+        git_branch=row_str(r, "git_branch"),
+        cwd=row_str(r, "cwd"),
+        created_at=row_str(r, "created_at"),
+        modified_at=row_str(r, "modified_at"),
+        duration_ms=row_int(r, "duration_ms"),
         is_sidechain=bool(r.get("is_sidechain", False)),
     )

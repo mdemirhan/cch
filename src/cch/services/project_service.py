@@ -6,6 +6,7 @@ from result import Err, Ok, Result
 
 from cch.data.repositories import ProjectRepository
 from cch.models.projects import ProjectSummary
+from cch.services._row_helpers import row_int, row_str
 
 
 class ProjectService:
@@ -29,28 +30,12 @@ class ProjectService:
 
 def _row_to_project_summary(row: object) -> ProjectSummary:
     r: dict[str, object] = dict(row)  # type: ignore[arg-type]
-
-    def _to_int(key: str) -> int:
-        value = r.get(key, 0)
-        if isinstance(value, bool):
-            return int(value)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            return int(value)
-        if isinstance(value, str):
-            try:
-                return int(value)
-            except ValueError:
-                return 0
-        return 0
-
     return ProjectSummary(
-        project_id=str(r.get("project_id", "") or ""),
-        provider=str(r.get("provider", "") or "claude"),
-        project_path=str(r.get("project_path", "") or ""),
-        project_name=str(r.get("project_name", "") or ""),
-        session_count=_to_int("session_count"),
-        first_activity=str(r.get("first_activity", "") or ""),
-        last_activity=str(r.get("last_activity", "") or ""),
+        project_id=row_str(r, "project_id"),
+        provider=row_str(r, "provider", "claude"),
+        project_path=row_str(r, "project_path"),
+        project_name=row_str(r, "project_name"),
+        session_count=row_int(r, "session_count"),
+        first_activity=row_str(r, "first_activity"),
+        last_activity=row_str(r, "last_activity"),
     )

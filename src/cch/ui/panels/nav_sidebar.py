@@ -26,8 +26,7 @@ class NavSidebar(QWidget):
         super().__init__(parent)
         self.setFixedWidth(96)
         self.setStyleSheet(
-            "background-color: #F4F6F8; "
-            f"border-right: 1px solid {COLORS['border']};"
+            f"background-color: #F4F6F8; border-right: 1px solid {COLORS['border']};"
         )
 
         layout = QVBoxLayout(self)
@@ -60,7 +59,9 @@ class NavSidebar(QWidget):
         layout.addStretch()
 
         self._refresh_btn = QPushButton("Inc\nRefresh")
-        self._refresh_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        self._refresh_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
+        )
         self._refresh_btn.setIconSize(QSize(14, 14))
         self._refresh_btn.setFixedSize(80, 44)
         self._refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -82,7 +83,9 @@ class NavSidebar(QWidget):
         layout.addWidget(self._force_refresh_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self._pane_btn = QPushButton("Focus")
-        self._pane_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarShadeButton))
+        self._pane_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarShadeButton)
+        )
         self._pane_btn.setIconSize(QSize(14, 14))
         self._pane_btn.setFixedSize(80, 34)
         self._pane_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -92,7 +95,9 @@ class NavSidebar(QWidget):
         layout.addWidget(self._pane_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self._keys_btn = QPushButton("Keys")
-        self._keys_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
+        self._keys_btn.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton)
+        )
         self._keys_btn.setIconSize(QSize(14, 14))
         self._keys_btn.setFixedSize(80, 34)
         self._keys_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -159,17 +164,17 @@ class NavSidebar(QWidget):
             )
         return (
             f"QPushButton {{ "
-                f"  background-color: transparent; "
-                f"  color: {COLORS['text_muted']}; "
-                "  border: 1px solid transparent; border-radius: 8px; "
-                "  font-size: 11px; "
-                "  text-align: left; padding: 6px 8px; "
-                f"}} "
+            f"  background-color: transparent; "
+            f"  color: {COLORS['text_muted']}; "
+            "  border: 1px solid transparent; border-radius: 8px; "
+            "  font-size: 11px; "
+            "  text-align: left; padding: 6px 8px; "
+            f"}} "
             f"QPushButton:hover {{ "
-                "  background-color: #FFFFFF; "
-                f"  border-color: {COLORS['border']}; "
-                f"  color: {COLORS['text']}; "
-                f"}}"
+            "  background-color: #FFFFFF; "
+            f"  border-color: {COLORS['border']}; "
+            f"  color: {COLORS['text']}; "
+            f"}}"
         )
 
     @staticmethod

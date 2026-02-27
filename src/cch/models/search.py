@@ -3,6 +3,17 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
+from PySide6.QtCore import Qt
+
+
+class SearchResultRoles:
+    """Named Qt UserRole offsets for SearchResult data in list models."""
+
+    SESSION_ID = Qt.ItemDataRole.UserRole
+    MESSAGE_TYPE = Qt.ItemDataRole.UserRole + 1
+    PROJECT_NAME = Qt.ItemDataRole.UserRole + 2
+    TIMESTAMP = Qt.ItemDataRole.UserRole + 3
+    PROVIDER = Qt.ItemDataRole.UserRole + 4
 
 
 class SearchResult(BaseModel):

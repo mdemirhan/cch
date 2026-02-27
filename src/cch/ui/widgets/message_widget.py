@@ -2,31 +2,21 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 from html import escape
 
-from cch.models.categories import normalize_message_type
+from cch.models.categories import MessageType, normalize_message_type
 from cch.models.sessions import MessageView
 from cch.ui.theme import MONO_FAMILY, format_tokens
-from cch.ui.widgets.markdown_renderer import render_markdown
+from cch.ui.widgets.markdown_renderer import render_markdown_body
 from cch.ui.widgets.thinking_widget import render_thinking_html
 from cch.ui.widgets.tool_call_widget import render_tool_call_html
 
-# Global counter for generating unique block IDs within a render pass
-_block_counter: int = 0
 
-
-def reset_block_counter() -> None:
-    """Reset internal render counter before each document render pass."""
-    global _block_counter  # noqa: PLW0603
-    _block_counter = 0
-
-
-def _next_block_id(prefix: str = "block") -> str:
+def _next_block_id(counter: itertools.count[int], prefix: str = "block") -> str:
     """Return a unique block ID for collapsible elements."""
-    global _block_counter  # noqa: PLW0603
-    _block_counter += 1
-    return f"{prefix}_{_block_counter}"
+    return f"{prefix}_{next(counter)}"
 
 
 def classify_message(
@@ -36,29 +26,31 @@ def classify_message(
     return {normalize_message_type(msg.type)}
 
 
-def render_message_html(msg: MessageView) -> str:
+def render_message_html(msg: MessageView, counter: itertools.count[int] | None = None) -> str:
     """Render a single message as an HTML fragment with data-categories."""
+    if counter is None:
+        counter = itertools.count(1)
     content_blocks = _parse_content_json(msg.content_json)
     categories = classify_message(msg)
     message_type = normalize_message_type(msg.type)
 
-    if message_type == "system":
+    if message_type == MessageType.SYSTEM:
         return _render_system(msg, categories)
 
-    if message_type == "user":
+    if message_type == MessageType.USER:
         return _render_user(msg, categories)
 
-    if message_type == "assistant":
+    if message_type == MessageType.ASSISTANT:
         return _render_assistant(msg, categories, content_blocks)
 
-    if message_type == "thinking":
-        return _render_thinking_message(msg, categories, content_blocks)
+    if message_type == MessageType.THINKING:
+        return _render_thinking_message(msg, categories, content_blocks, counter)
 
-    if message_type == "tool_use":
-        return _render_tool_use_message(msg, content_blocks, categories)
+    if message_type == MessageType.TOOL_USE:
+        return _render_tool_use_message(msg, content_blocks, categories, counter)
 
-    if message_type == "tool_result":
-        return _render_tool_result(msg, content_blocks, categories)
+    if message_type == MessageType.TOOL_RESULT:
+        return _render_tool_result(msg, content_blocks, categories, counter)
 
     return _render_unknown(msg, categories)
 
@@ -87,8 +79,7 @@ def _render_user(msg: MessageView, categories: set[str]) -> str:
     if not text:
         body = _empty_placeholder("(empty user message)")
     else:
-        md_html = render_markdown(text[:5000])
-        body = _extract_body(md_html)
+        body = render_markdown_body(text[:5000])
 
     timestamp = msg.timestamp[:19] if msg.timestamp else ""
     return (
@@ -148,10 +139,9 @@ def _render_assistant(
             continue
         text = str(block.get("text", ""))
         if text.strip():
-            md_html = render_markdown(text[:10000])
-            parts.append(_extract_body(md_html))
+            parts.append(render_markdown_body(text[:10000]))
     if not parts and msg.content_text.strip():
-        parts.append(_extract_body(render_markdown(msg.content_text[:10000])))
+        parts.append(render_markdown_body(msg.content_text[:10000]))
 
     body = "\n".join(parts)
     return f"<div {_message_attrs(msg, categories, 'assistant')}>{body}</div>"
@@ -161,6 +151,7 @@ def _render_tool_use_message(
     msg: MessageView,
     content_blocks: list[dict[str, object]],
     categories: set[str],
+    counter: itertools.count[int],
 ) -> str:
     """Render a canonical tool-use message."""
     parts: list[str] = []
@@ -172,13 +163,13 @@ def _render_tool_use_message(
             if isinstance(tool_use, dict):
                 name = str(tool_use.get("name", "unknown"))
                 input_json = tool_use.get("input_json", "{}")
-                bid = _next_block_id("tool")
+                bid = _next_block_id(counter, "tool")
                 parts.append(render_tool_call_html(name, str(input_json), block_id=bid))
                 rendered_tool_use = True
 
     if not rendered_tool_use:
         for tc in msg.tool_calls:
-            bid = _next_block_id("tool")
+            bid = _next_block_id(counter, "tool")
             parts.append(render_tool_call_html(tc.tool_name, tc.input_json, block_id=bid))
 
     if not parts:
@@ -192,6 +183,7 @@ def _render_thinking_message(
     msg: MessageView,
     categories: set[str],
     content_blocks: list[dict[str, object]],
+    counter: itertools.count[int],
 ) -> str:
     """Render a canonical thinking message."""
     parts: list[str] = []
@@ -200,10 +192,10 @@ def _render_thinking_message(
             continue
         text = str(block.get("text", ""))
         if text.strip():
-            bid = _next_block_id("thinking")
+            bid = _next_block_id(counter, "thinking")
             parts.append(render_thinking_html(text, block_id=bid))
     if not parts and msg.content_text.strip():
-        bid = _next_block_id("thinking")
+        bid = _next_block_id(counter, "thinking")
         parts.append(render_thinking_html(msg.content_text, block_id=bid))
     if not parts:
         parts.append(_empty_placeholder("(empty thinking message)"))
@@ -216,8 +208,7 @@ def _render_system(msg: MessageView, categories: set[str]) -> str:
     timestamp = msg.timestamp[:19] if msg.timestamp else ""
     text = _system_text(msg)
     if text:
-        md_html = render_markdown(text[:5000])
-        body = _extract_body(md_html)
+        body = render_markdown_body(text[:5000])
     else:
         body = _empty_placeholder("(empty system message)")
 
@@ -232,11 +223,12 @@ def _render_system(msg: MessageView, categories: set[str]) -> str:
 
 
 def _render_tool_result(
-    msg: MessageView, blocks: list[dict[str, object]], categories: set[str]
+    msg: MessageView,
+    blocks: list[dict[str, object]],
+    categories: set[str],
+    counter: itertools.count[int],
 ) -> str:
     """Render tool result blocks."""
-    from html import escape
-
     parts: list[str] = []
     for block in blocks:
         if block.get("type") != "tool_result":
@@ -248,7 +240,7 @@ def _render_tool_result(
             text = text[:3000] + "\n... (truncated)"
 
         escaped = escape(text)
-        bid = _next_block_id("result")
+        bid = _next_block_id(counter, "result")
         parts.append(
             f'<div id="{bid}" class="collapsible tool-result">'
             f'<div class="collapsible-header" onclick="toggleCollapsible(\'{bid}\')">'
@@ -280,15 +272,6 @@ def _parse_content_json(content_json: str) -> list[dict[str, object]]:
         return []
 
 
-def _extract_body(html: str) -> str:
-    """Extract the <body> content from a full HTML document."""
-    start = html.find("<body>")
-    end = html.find("</body>")
-    if start != -1 and end != -1:
-        return html[start + 6 : end]
-    return html
-
-
 def _system_text(msg: MessageView) -> str:
     """Prefer content_text; fallback to text blocks from content_json."""
     text = msg.content_text.strip()
@@ -318,17 +301,17 @@ def _render_unknown(msg: MessageView, categories: set[str]) -> str:
     message_type = normalize_message_type(msg.type)
     role_label = "Assistant"
     cls = "assistant"
-    if message_type == "system":
+    if message_type == MessageType.SYSTEM:
         role_label = "System"
         cls = "system"
-    elif message_type == "user":
+    elif message_type == MessageType.USER:
         role_label = "You"
         cls = "user"
     timestamp = msg.timestamp[:19] if msg.timestamp else ""
     text = msg.content_text.strip()[:2000]
     body = _empty_placeholder("(unsupported or empty message)")
     if text:
-        body += _extract_body(render_markdown(text))
+        body += render_markdown_body(text)
 
     return (
         f"<div {_message_attrs(msg, categories, cls)}>"

@@ -358,8 +358,7 @@ def _load_sessions_index(project_dir: Path) -> dict[str, dict[str, object]]:
     if not index_path.is_file():
         return {}
     try:
-        with open(index_path, encoding="utf-8") as file:
-            data = json.load(file)
+        data = json.loads(index_path.read_text(encoding="utf-8"))
         entries = data.get("entries", [])
         return {e["sessionId"]: e for e in entries if isinstance(e, dict) and "sessionId" in e}
     except (json.JSONDecodeError, OSError) as exc:
@@ -402,8 +401,7 @@ def _safe_load_json(path: Path) -> object:
     if not path.is_file():
         return None
     try:
-        with open(path, encoding="utf-8") as file:
-            return json.load(file)
+        return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
 

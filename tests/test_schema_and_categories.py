@@ -14,6 +14,7 @@ from cch.models.categories import (
 )
 from cch.models.sessions import MessageView
 from cch.services.session_service import SessionService
+from cch.ui.widgets.markdown_renderer import render_markdown_body
 from cch.ui.widgets.message_widget import render_message_html
 
 
@@ -58,6 +59,27 @@ def test_unknown_message_is_rendered_as_placeholder() -> None:
     )
     html = render_message_html(msg)
     assert "unsupported or empty message" in html
+
+
+def test_markdown_renderer_escapes_raw_html_tags() -> None:
+    text = "<style>body { display:none; }</style>\n\n# Header"
+    html = render_markdown_body(text)
+    assert "<style>" not in html
+    assert "&lt;style&gt;" in html
+    assert "<h1>Header</h1>" in html
+
+
+def test_message_html_escapes_angle_bracket_instruction_blocks() -> None:
+    msg = MessageView(
+        uuid="msg-raw-tags",
+        type="user",
+        content_text="<environment_context>\n<cwd>/tmp/demo</cwd>\n</environment_context>",
+        content_json="[]",
+        timestamp="2026-01-01T00:00:00Z",
+    )
+    html = render_message_html(msg)
+    assert "<environment_context>" not in html
+    assert "&lt;environment_context&gt;" in html
 
 
 @pytest.mark.asyncio

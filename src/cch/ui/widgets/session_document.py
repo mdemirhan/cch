@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.resources
+import itertools
 from html import escape
 
 from cch.models.categories import CATEGORY_FILTERS
@@ -13,7 +14,7 @@ from cch.ui.theme import (
     format_tokens,
     provider_label,
 )
-from cch.ui.widgets.message_widget import render_message_html, reset_block_counter
+from cch.ui.widgets.message_widget import render_message_html
 
 _TEMPLATE: str | None = None
 
@@ -107,10 +108,10 @@ def build_session_document(detail: SessionDetail, active_filters: list[str]) -> 
     chips_html = _build_filter_chips(set(active_filters))
 
     body_parts: list[str] = []
-    reset_block_counter()
+    counter = itertools.count(1)
     for msg in detail.messages:
         try:
-            html = render_message_html(msg)
+            html = render_message_html(msg, counter)
         except Exception:
             html = _render_error_message(msg.uuid)
         if html:

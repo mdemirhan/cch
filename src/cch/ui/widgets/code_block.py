@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from html import escape
 
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
@@ -93,5 +94,5 @@ def render_file_header(file_path: str) -> str:
         f"color: {COLORS['primary']}; "
         f"background-color: {COLORS['primary']}15; "
         f'padding: 2px 8px; border-radius: 4px;">'
-        f"{file_path}</span></div>"
+        f"{escape(file_path)}</span></div>"
     )

@@ -122,7 +122,7 @@ class TestIndexer:
         indexer = Indexer(in_memory_db, test_config)
         await indexer.index_all(force=True)
 
-        session = (test_config.projects_dir / "-tmp-test-project" / "test-session-001.jsonl")
+        session = test_config.projects_dir / "-tmp-test-project" / "test-session-001.jsonl"
         stat = session.stat()
         await in_memory_db.execute("DELETE FROM messages")
         await in_memory_db.execute("DELETE FROM tool_calls")

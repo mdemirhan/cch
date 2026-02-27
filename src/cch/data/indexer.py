@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from cch.data.discovery import DiscoveredSession, discover_sessions
 from cch.data.parser import parse_session_file
+from cch.models.categories import MessageType
 from cch.models.indexing import IndexResult
+from cch.models.messages import ParsedMessage
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -21,6 +24,26 @@ logger = logging.getLogger(__name__)
 
 type ProgressCallback = Callable[[int, int, str], None]
 _BATCH_SIZE = 300
+
+
+@dataclass
+class _SessionStats:
+    """Accumulated statistics while parsing a session."""
+
+    message_count: int = 0
+    user_count: int = 0
+    assistant_count: int = 0
+    tool_call_count: int = 0
+    total_input: int = 0
+    total_output: int = 0
+    total_cache_read: int = 0
+    total_cache_creation: int = 0
+    models_used: set[str] = field(default_factory=set)
+    primary_model: str = ""
+    first_timestamp: str = ""
+    last_timestamp: str = ""
+    first_prompt: str = ""
+    summary: str = ""
 
 
 class Indexer:
@@ -91,8 +114,7 @@ class Indexer:
             "SELECT file_path, file_mtime_ms, file_size FROM indexed_files"
         )
         return {
-            row["file_path"]: (int(row["file_mtime_ms"]), int(row["file_size"]))
-            for row in rows
+            row["file_path"]: (int(row["file_mtime_ms"]), int(row["file_size"])) for row in rows
         }
 
     async def _load_indexed_sessions(self) -> dict[str, str]:
@@ -115,38 +137,77 @@ class Indexer:
             return True
         return current != (session.mtime_ms, session.file_size)
 
+    async def _delete_old_sessions(self, session: DiscoveredSession) -> None:
+        """Remove previous session rows for the same file path."""
+        existing_for_path = await self._db.fetch_all(
+            "SELECT session_id FROM sessions WHERE file_path = ?",
+            (str(session.file_path),),
+        )
+        old_session_ids = {str(row["session_id"]) for row in existing_for_path}
+        old_session_ids.add(session.session_id)
+        for old_session_id in old_session_ids:
+            await self._db.execute(
+                "DELETE FROM sessions WHERE session_id = ?",
+                (old_session_id,),
+            )
+
+    @staticmethod
+    def _accumulate_message_stats(
+        stats: _SessionStats,
+        msg: ParsedMessage,
+    ) -> None:
+        """Update running counters from a parsed message."""
+        stats.message_count += 1
+        if msg.type == MessageType.USER:
+            stats.user_count += 1
+        if msg.type == MessageType.ASSISTANT:
+            stats.assistant_count += 1
+        stats.total_input += msg.usage.input_tokens
+        stats.total_output += msg.usage.output_tokens
+        stats.total_cache_read += msg.usage.cache_read_tokens
+        stats.total_cache_creation += msg.usage.cache_creation_tokens
+        if msg.model:
+            stats.models_used.add(msg.model)
+            if not stats.primary_model:
+                stats.primary_model = msg.model
+        if msg.timestamp:
+            if not stats.first_timestamp:
+                stats.first_timestamp = msg.timestamp
+            stats.last_timestamp = msg.timestamp
+        if not stats.first_prompt and msg.type == MessageType.USER and msg.content_text:
+            stats.first_prompt = msg.content_text[:500]
+
+    @staticmethod
+    def _compute_timestamps(
+        session: DiscoveredSession,
+        stats: _SessionStats,
+        fallback_created: str,
+        fallback_modified: str,
+    ) -> tuple[str, str, int]:
+        """Compute final created_at, modified_at, and duration_ms."""
+        duration_ms = 0
+        if stats.first_timestamp and stats.last_timestamp:
+            try:
+                first_dt = datetime.fromisoformat(stats.first_timestamp.replace("Z", "+00:00"))
+                last_dt = datetime.fromisoformat(stats.last_timestamp.replace("Z", "+00:00"))
+                duration_ms = int((last_dt - first_dt).total_seconds() * 1000)
+            except ValueError:
+                pass
+        created_at = session.created or stats.first_timestamp or fallback_created
+        modified_at = session.modified or stats.last_timestamp or fallback_modified
+        return created_at, modified_at, duration_ms
+
     async def _index_session(self, session: DiscoveredSession, savepoint_id: int) -> int:
         """Parse and index a single session file. Returns message count."""
         savepoint = f"session_{savepoint_id}"
         await self._db.execute(f"SAVEPOINT {savepoint}")
         try:
-            # Clean previous rows. CASCADE handles messages/tool_calls.
-            existing_for_path = await self._db.fetch_all(
-                "SELECT session_id FROM sessions WHERE file_path = ?",
-                (str(session.file_path),),
-            )
-            old_session_ids = {str(row["session_id"]) for row in existing_for_path}
-            old_session_ids.add(session.session_id)
-            for old_session_id in old_session_ids:
-                await self._db.execute(
-                    "DELETE FROM sessions WHERE session_id = ?",
-                    (old_session_id,),
-                )
+            await self._delete_old_sessions(session)
 
-            message_count = 0
-            user_count = 0
-            assistant_count = 0
-            tool_call_count = 0
-            total_input = 0
-            total_output = 0
-            total_cache_read = 0
-            total_cache_creation = 0
-            models_used: set[str] = set()
-            primary_model = ""
-            first_timestamp = ""
-            last_timestamp = ""
-            first_prompt = session.first_prompt
-            summary = session.summary
+            stats = _SessionStats(
+                first_prompt=session.first_prompt,
+                summary=session.summary,
+            )
             message_rows: list[tuple[object, ...]] = []
             tool_call_rows: list[tuple[object, ...]] = []
 
@@ -175,8 +236,8 @@ class Indexer:
                     session.project_id,
                     session.provider,
                     str(session.file_path),
-                    first_prompt,
-                    summary,
+                    stats.first_prompt,
+                    stats.summary,
                     session.git_branch,
                     session.project_path,
                     created_at,
@@ -190,34 +251,7 @@ class Indexer:
                 provider=session.provider,
                 session_id=session.session_id,
             ):
-                message_count += 1
-
-                if msg.type == "user":
-                    user_count += 1
-                if msg.type == "assistant":
-                    assistant_count += 1
-
-                total_input += msg.usage.input_tokens
-                total_output += msg.usage.output_tokens
-                total_cache_read += msg.usage.cache_read_tokens
-                total_cache_creation += msg.usage.cache_creation_tokens
-
-                if msg.model:
-                    models_used.add(msg.model)
-                    if not primary_model:
-                        primary_model = msg.model
-
-                if msg.timestamp:
-                    if not first_timestamp:
-                        first_timestamp = msg.timestamp
-                    last_timestamp = msg.timestamp
-
-                if (
-                    not first_prompt
-                    and msg.type == "user"
-                    and msg.content_text
-                ):
-                    first_prompt = msg.content_text[:500]
+                self._accumulate_message_stats(stats, msg)
 
                 content_json = json.dumps(
                     [b.model_dump() for b in msg.content_blocks],
@@ -247,7 +281,7 @@ class Indexer:
                         tool_use_id = block.tool_use.tool_use_id or (
                             f"{session.session_id}:{msg.sequence_num}:{block_idx}"
                         )
-                        tool_call_count += 1
+                        stats.tool_call_count += 1
                         tool_call_rows.append(
                             (
                                 session.session_id,
@@ -268,18 +302,9 @@ class Indexer:
                     await self._flush_tool_call_rows(tool_call_rows)
                     tool_call_rows.clear()
 
-            # Calculate duration
-            duration_ms = 0
-            if first_timestamp and last_timestamp:
-                try:
-                    first_dt = datetime.fromisoformat(first_timestamp.replace("Z", "+00:00"))
-                    last_dt = datetime.fromisoformat(last_timestamp.replace("Z", "+00:00"))
-                    duration_ms = int((last_dt - first_dt).total_seconds() * 1000)
-                except ValueError:
-                    pass
-
-            created_at = session.created or first_timestamp or created_at
-            modified_at = session.modified or last_timestamp or modified_at
+            created_at, modified_at, duration_ms = self._compute_timestamps(
+                session, stats, created_at, modified_at
+            )
 
             if message_rows:
                 await self._flush_message_rows(message_rows)
@@ -298,18 +323,18 @@ class Indexer:
                        created_at = ?, modified_at = ?, duration_ms = ?, is_sidechain = ?
                    WHERE session_id = ?""",
                 (
-                    first_prompt,
-                    summary,
-                    message_count,
-                    user_count,
-                    assistant_count,
-                    tool_call_count,
-                    total_input,
-                    total_output,
-                    total_cache_read,
-                    total_cache_creation,
-                    primary_model,
-                    ",".join(sorted(models_used)),
+                    stats.first_prompt,
+                    stats.summary,
+                    stats.message_count,
+                    stats.user_count,
+                    stats.assistant_count,
+                    stats.tool_call_count,
+                    stats.total_input,
+                    stats.total_output,
+                    stats.total_cache_read,
+                    stats.total_cache_creation,
+                    stats.primary_model,
+                    ",".join(sorted(stats.models_used)),
                     session.git_branch,
                     session.project_path,
                     created_at,
@@ -329,7 +354,7 @@ class Indexer:
                 (str(session.file_path), session.mtime_ms, session.file_size, now),
             )
             await self._db.execute(f"RELEASE {savepoint}")
-            return message_count
+            return stats.message_count
         except Exception:
             await self._db.execute(f"ROLLBACK TO {savepoint}")
             await self._db.execute(f"RELEASE {savepoint}")

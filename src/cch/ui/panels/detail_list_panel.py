@@ -14,7 +14,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtWidgets import QLabel, QListView, QMenu, QVBoxLayout, QWidget
 
-from cch.models.sessions import SessionSummary
+from cch.models.sessions import SessionRoles, SessionSummary
 from cch.ui.finder import show_in_file_manager
 from cch.ui.theme import COLORS
 from cch.ui.widgets.delegates import SessionDelegate
@@ -57,21 +57,21 @@ class SessionListModel(QAbstractListModel):
         if role == Qt.ItemDataRole.DisplayRole:
             title = s.summary or s.first_prompt or s.session_id[:12]
             return " ".join(title.split())
-        if role == Qt.ItemDataRole.UserRole:
+        if role == SessionRoles.ID:
             return s.session_id
-        if role == Qt.ItemDataRole.UserRole + 1:
+        if role == SessionRoles.MODEL:
             return s.model
-        if role == Qt.ItemDataRole.UserRole + 2:
+        if role == SessionRoles.INPUT_TOKENS:
             return s.total_input_tokens
-        if role == Qt.ItemDataRole.UserRole + 3:
+        if role == SessionRoles.OUTPUT_TOKENS:
             return s.total_output_tokens
-        if role == Qt.ItemDataRole.UserRole + 4:
+        if role == SessionRoles.MODIFIED_AT:
             return s.modified_at
-        if role == Qt.ItemDataRole.UserRole + 5:
+        if role == SessionRoles.MESSAGE_COUNT:
             return s.message_count
-        if role == Qt.ItemDataRole.UserRole + 6:
+        if role == SessionRoles.PROVIDER:
             return s.provider
-        if role == Qt.ItemDataRole.UserRole + 7:
+        if role == SessionRoles.FILE_PATH:
             return s.file_path
         return None
 
@@ -154,7 +154,7 @@ class DetailListPanel(QWidget):
         if state.selected_session_id:
             for row in range(self._model.rowCount()):
                 index = self._model.index(row, 0)
-                session_id = self._model.data(index, Qt.ItemDataRole.UserRole)
+                session_id = self._model.data(index, SessionRoles.ID)
                 if session_id == state.selected_session_id:
                     self._list.setCurrentIndex(index)
                     break

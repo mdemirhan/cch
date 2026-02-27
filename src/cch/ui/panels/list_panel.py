@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from cch.models.projects import ProjectSummary
+from cch.models.projects import ProjectRoles, ProjectSummary
 from cch.ui.finder import show_in_file_manager
 from cch.ui.theme import COLORS, provider_color, provider_label
 from cch.ui.widgets.delegates import ProjectDelegate
@@ -78,15 +78,15 @@ class ProjectListModel(QAbstractListModel):
         project = self._filtered[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
             return project.project_name
-        if role == Qt.ItemDataRole.UserRole:
+        if role == ProjectRoles.ID:
             return project.project_id
-        if role == Qt.ItemDataRole.UserRole + 1:
+        if role == ProjectRoles.PATH:
             return project.project_path
-        if role == Qt.ItemDataRole.UserRole + 2:
+        if role == ProjectRoles.SESSION_COUNT:
             return project.session_count
-        if role == Qt.ItemDataRole.UserRole + 3:
+        if role == ProjectRoles.LAST_ACTIVITY:
             return project.last_activity
-        if role == Qt.ItemDataRole.UserRole + 4:
+        if role == ProjectRoles.PROVIDER:
             return project.provider
         return None
 
@@ -247,7 +247,7 @@ class ListPanel(QWidget):
         if state.selected_project_id:
             for row in range(self._model.rowCount()):
                 index = self._model.index(row, 0)
-                project_id = self._model.data(index, Qt.ItemDataRole.UserRole)
+                project_id = self._model.data(index, ProjectRoles.ID)
                 if project_id == state.selected_project_id:
                     self._list.setCurrentIndex(index)
                     break

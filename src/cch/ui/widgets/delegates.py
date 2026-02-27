@@ -9,6 +9,9 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from cch.models.categories import COLOR_BY_KEY, LABEL_BY_KEY, normalize_message_type
+from cch.models.projects import ProjectRoles
+from cch.models.search import SearchResultRoles
+from cch.models.sessions import SessionRoles
 from cch.ui.theme import (
     COLORS,
     format_relative_time,
@@ -137,10 +140,10 @@ class ProjectDelegate(QStyledItemDelegate):
             painter.fillRect(rect, _row_background(index))
 
         name = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        path = str(index.data(Qt.ItemDataRole.UserRole + 1) or "")
-        count = int(index.data(Qt.ItemDataRole.UserRole + 2) or 0)
-        last_activity = str(index.data(Qt.ItemDataRole.UserRole + 3) or "")
-        provider = str(index.data(Qt.ItemDataRole.UserRole + 4) or "claude")
+        path = str(index.data(ProjectRoles.PATH) or "")
+        count = int(index.data(ProjectRoles.SESSION_COUNT) or 0)
+        last_activity = str(index.data(ProjectRoles.LAST_ACTIVITY) or "")
+        provider = str(index.data(ProjectRoles.PROVIDER) or "claude")
 
         left = rect.left() + 16
         right = rect.right() - 16
@@ -227,12 +230,12 @@ class SessionDelegate(QStyledItemDelegate):
             painter.fillRect(rect, _row_background(index))
 
         summary = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        model = str(index.data(Qt.ItemDataRole.UserRole + 1) or "")
-        input_tokens = int(index.data(Qt.ItemDataRole.UserRole + 2) or 0)
-        output_tokens = int(index.data(Qt.ItemDataRole.UserRole + 3) or 0)
-        modified = str(index.data(Qt.ItemDataRole.UserRole + 4) or "")
-        msg_count = int(index.data(Qt.ItemDataRole.UserRole + 5) or 0)
-        provider = str(index.data(Qt.ItemDataRole.UserRole + 6) or "claude")
+        model = str(index.data(SessionRoles.MODEL) or "")
+        input_tokens = int(index.data(SessionRoles.INPUT_TOKENS) or 0)
+        output_tokens = int(index.data(SessionRoles.OUTPUT_TOKENS) or 0)
+        modified = str(index.data(SessionRoles.MODIFIED_AT) or "")
+        msg_count = int(index.data(SessionRoles.MESSAGE_COUNT) or 0)
+        provider = str(index.data(SessionRoles.PROVIDER) or "claude")
 
         left = rect.left() + 16
         right = rect.right() - 16
@@ -313,10 +316,12 @@ class SearchResultDelegate(QStyledItemDelegate):
             painter.fillRect(rect, _row_background(index))
 
         snippet = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        message_type = normalize_message_type(str(index.data(Qt.ItemDataRole.UserRole + 1) or ""))
-        project = str(index.data(Qt.ItemDataRole.UserRole + 2) or "")
-        timestamp = str(index.data(Qt.ItemDataRole.UserRole + 3) or "")
-        provider = str(index.data(Qt.ItemDataRole.UserRole + 4) or "claude")
+        message_type = normalize_message_type(
+            str(index.data(SearchResultRoles.MESSAGE_TYPE) or "")
+        )
+        project = str(index.data(SearchResultRoles.PROJECT_NAME) or "")
+        timestamp = str(index.data(SearchResultRoles.TIMESTAMP) or "")
+        provider = str(index.data(SearchResultRoles.PROVIDER) or "claude")
 
         left = rect.left() + 16
         right = rect.right() - 16
