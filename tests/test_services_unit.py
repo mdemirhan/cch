@@ -10,8 +10,7 @@ import pytest
 from result import Err, Ok
 
 from cch.config import Config
-from cch.data.repositories import AnalyticsRepository, ProjectRepository, SessionRepository
-from cch.services.analytics_service import AnalyticsService
+from cch.data.repositories import ProjectRepository, SessionRepository
 from cch.services.container import ServiceContainer
 from cch.services.project_service import ProjectService
 from cch.services.search_service import SearchService
@@ -52,50 +51,6 @@ async def test_search_service_wraps_engine_errors() -> None:
     result = await service.search("hello")
     assert isinstance(result, Err)
     assert "boom" in result.err_value
-
-
-@pytest.mark.asyncio
-async def test_analytics_service_period_variants() -> None:
-    db = FakeDB()
-    db.fetch_all_result = [
-        {
-            "period_date": "2026-W08",
-            "model": "claude-opus-4-6",
-            "input_tokens": 1000,
-            "output_tokens": 2000,
-            "cache_read_tokens": 300,
-            "cache_creation_tokens": 0,
-        }
-    ]
-    svc = AnalyticsService(AnalyticsRepository(db))  # type: ignore[arg-type]
-
-    weekly = await svc.get_cost_breakdown("weekly")
-    assert isinstance(weekly, Ok)
-    assert "strftime('%Y-W%W'" in db.last_fetch_all_sql
-
-    monthly = await svc.get_cost_breakdown("monthly")
-    assert isinstance(monthly, Ok)
-    assert "strftime('%Y-%m'" in db.last_fetch_all_sql
-
-    daily = await svc.get_cost_breakdown("daily")
-    assert isinstance(daily, Ok)
-    assert "DATE(created_at)" in db.last_fetch_all_sql
-
-
-@pytest.mark.asyncio
-async def test_analytics_service_heatmap_adjusts_sunday_index() -> None:
-    db = FakeDB()
-    db.fetch_all_result = [
-        {"dow": 0, "hour": 9, "count": 3},  # Sunday -> index 6
-        {"dow": 1, "hour": 10, "count": 5},  # Monday -> index 0
-        {"dow": 2, "hour": 25, "count": 9},  # invalid hour ignored
-    ]
-    svc = AnalyticsService(AnalyticsRepository(db))  # type: ignore[arg-type]
-    result = await svc.get_heatmap_data()
-    assert isinstance(result, Ok)
-    heatmap = result.ok_value.values
-    assert heatmap[6][9] == 3
-    assert heatmap[0][10] == 5
 
 
 @pytest.mark.asyncio

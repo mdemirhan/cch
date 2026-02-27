@@ -8,7 +8,6 @@ from html import escape
 from cch.models.categories import CATEGORY_FILTERS
 from cch.models.sessions import SessionDetail
 from cch.ui.theme import (
-    format_cost,
     format_datetime,
     format_duration_ms,
     format_tokens,
@@ -47,17 +46,8 @@ def _render_error_message(msg_uuid: str) -> str:
 
 
 def _build_session_header(detail: SessionDetail) -> str:
-    from cch.services.cost import estimate_cost
-
     title = detail.summary or detail.first_prompt or detail.session_id[:20]
     title = " ".join(title.split())
-    cost = estimate_cost(
-        detail.model,
-        detail.total_input_tokens,
-        detail.total_output_tokens,
-        detail.total_cache_read_tokens,
-        detail.total_cache_creation_tokens,
-    )
 
     meta_parts: list[str] = []
     if detail.project_name:
@@ -76,7 +66,6 @@ def _build_session_header(detail: SessionDetail) -> str:
         f"{detail.message_count} messages",
         f"{format_tokens(detail.total_input_tokens)} in",
         f"{format_tokens(detail.total_output_tokens)} out",
-        format_cost(cost["total_cost"]),
     ]
     if detail.duration_ms:
         stats.append(format_duration_ms(detail.duration_ms))

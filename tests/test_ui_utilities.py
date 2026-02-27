@@ -13,7 +13,6 @@ from cch.ui.finder import show_in_file_manager
 from cch.ui.theme import (
     COLORS,
     build_stylesheet,
-    format_cost,
     format_datetime,
     format_duration_ms,
     format_relative_time,
@@ -47,9 +46,6 @@ def test_theme_build_and_format_helpers() -> None:
     assert format_tokens(900) == "900"
     assert format_tokens(12_300) == "12.3K"
     assert format_tokens(4_500_000) == "4.5M"
-
-    assert format_cost(0.0012) == "$0.0012"
-    assert format_cost(1.2) == "$1.20"
 
     assert provider_label("codex") == "Codex"
     assert provider_label("gemini") == "Gemini"

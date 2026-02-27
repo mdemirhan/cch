@@ -8,10 +8,8 @@ from result import Err, Ok
 from cch.config import Config
 from cch.data.db import Database
 from cch.data.indexer import Indexer
-from cch.data.repositories import AnalyticsRepository, ProjectRepository, SessionRepository
+from cch.data.repositories import ProjectRepository, SessionRepository
 from cch.data.search import SearchEngine
-from cch.services.analytics_service import AnalyticsService
-from cch.services.cost import estimate_cost
 from cch.services.project_service import ProjectService
 from cch.services.search_service import SearchService
 from cch.services.session_service import SessionService
@@ -70,14 +68,6 @@ class TestSessionService:
         assert isinstance(result, Err)
 
     @pytest.mark.asyncio
-    async def test_get_stats(self, indexed_db: Database) -> None:
-        svc = SessionService(SessionRepository(indexed_db))
-        result = await svc.get_stats()
-        assert isinstance(result, Ok)
-        stats = result.ok_value
-        assert stats["total_sessions"] >= 1
-
-    @pytest.mark.asyncio
     async def test_get_recent(self, indexed_db: Database) -> None:
         svc = SessionService(SessionRepository(indexed_db))
         result = await svc.get_recent_sessions(limit=5)
@@ -100,26 +90,6 @@ class TestProjectService:
         assert isinstance(result, Err)
 
 
-class TestAnalyticsService:
-    @pytest.mark.asyncio
-    async def test_get_tool_usage(self, indexed_db: Database) -> None:
-        svc = AnalyticsService(AnalyticsRepository(indexed_db))
-        result = await svc.get_tool_usage()
-        assert isinstance(result, Ok)
-        tools = result.ok_value
-        assert len(tools) >= 1
-        assert tools[0].tool_name == "Edit"
-
-    @pytest.mark.asyncio
-    async def test_get_heatmap(self, indexed_db: Database) -> None:
-        svc = AnalyticsService(AnalyticsRepository(indexed_db))
-        result = await svc.get_heatmap_data()
-        assert isinstance(result, Ok)
-        heatmap = result.ok_value
-        assert len(heatmap.values) == 7
-        assert len(heatmap.values[0]) == 24
-
-
 class TestSearchService:
     @pytest.mark.asyncio
     async def test_search(self, indexed_db: Database) -> None:
@@ -135,29 +105,3 @@ class TestSearchService:
         svc = SearchService(engine)
         result = await svc.search("")
         assert isinstance(result, Err)
-
-
-class TestCostEstimation:
-    def test_opus_cost(self) -> None:
-        cost = estimate_cost(
-            model="claude-opus-4-6",
-            input_tokens=1_000_000,
-            output_tokens=1_000_000,
-        )
-        assert cost["input_cost"] == 15.0
-        assert cost["output_cost"] == 75.0
-        assert cost["total_cost"] == 90.0
-
-    def test_unknown_model(self) -> None:
-        cost = estimate_cost(
-            model="unknown-model",
-            input_tokens=1_000_000,
-            output_tokens=1_000_000,
-        )
-        # Should use default (Sonnet-level) pricing
-        assert cost["input_cost"] == 3.0
-        assert cost["output_cost"] == 15.0
-
-    def test_zero_tokens(self) -> None:
-        cost = estimate_cost(model="claude-opus-4-6")
-        assert cost["total_cost"] == 0.0

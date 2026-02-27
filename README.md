@@ -17,7 +17,7 @@ Provider logs are spread across different directories and formats. CCH unifies t
 - inspect sessions/project activity in one place
 - run full-text search across providers
 - filter by provider and message category consistently
-- review detailed conversations with usage/cost context
+- review detailed conversations with consistent metadata context
 
 ## Core Features
 
@@ -43,7 +43,6 @@ Provider logs are spread across different directories and formats. CCH unifies t
   - focus mode (`Focus/Unfocus`) for detail-first reading
   - zoom controls
 - Context menus to open project/session locations in Finder (macOS).
-- Stats dashboard with aggregate metrics and charts.
 
 ## Design Choices
 
@@ -119,7 +118,6 @@ uv run pytest -q
 
 - `Ctrl+1` Projects view
 - `Ctrl+2` Search view
-- `Ctrl+3` Stats view
 - `Ctrl+Shift+M` or `F11` Focus/Unfocus session detail
 - `Esc` Exit focus mode
 - `Ctrl++` / `Ctrl+=` Zoom in (session detail)

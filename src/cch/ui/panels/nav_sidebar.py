@@ -10,7 +10,6 @@ from cch.ui.theme import COLORS
 _NAV_ITEMS = [
     ("history", "Projects", QStyle.StandardPixmap.SP_FileDialogDetailedView),
     ("search", "Search", QStyle.StandardPixmap.SP_FileDialogContentsView),
-    ("statistics", "Stats", QStyle.StandardPixmap.SP_FileDialogInfoView),
 ]
 
 

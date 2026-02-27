@@ -11,7 +11,6 @@ from cch.models.sessions import SessionDetail
 from cch.ui.theme import COLORS
 from cch.ui.views.history_view import HistoryView
 from cch.ui.views.search_view import SearchView
-from cch.ui.views.statistics_view import StatisticsView
 
 if TYPE_CHECKING:
     from cch.services.container import ServiceContainer
@@ -47,23 +46,18 @@ class ContentPanel(QStackedWidget):
         self._empty_view = EmptyStateView()
         self._history_view = HistoryView()
         self._search_view = SearchView()
-        self._statistics_view = StatisticsView()
 
         self.addWidget(self._empty_view)
         self.addWidget(self._history_view)
         self.addWidget(self._search_view)
-        self.addWidget(self._statistics_view)
 
         # Wire search → session navigation
         self._search_view.session_requested.connect(self.session_requested.emit)
 
-        self._services: ServiceContainer | None = None
         self.setCurrentWidget(self._empty_view)
 
     def set_services(self, services: ServiceContainer) -> None:
-        self._services = services
         self._search_view.set_services(services)
-        self._statistics_view.set_services(services)
 
     def show_history(self) -> None:
         """Switch to the history/conversation view."""
@@ -73,10 +67,6 @@ class ContentPanel(QStackedWidget):
         """Switch to the search view."""
         self.setCurrentWidget(self._search_view)
         self._search_view.focus_input()
-
-    def show_statistics(self) -> None:
-        """Switch to the statistics view."""
-        self.setCurrentWidget(self._statistics_view)
 
     def show_session(
         self,

@@ -153,13 +153,6 @@ class SessionService:
         rows = await self._repo.get_recent_session_rows(limit)
         return Ok([_row_to_summary(row) for row in rows])
 
-    async def get_stats(self) -> Result[dict[str, int], str]:
-        """Get aggregate session statistics."""
-        row = await self._repo.get_stats_row()
-        if row is None:
-            return Ok({})
-        return Ok(dict(row))
-
 
 def _row_to_summary(row: object) -> SessionSummary:
     """Convert a database row to SessionSummary."""

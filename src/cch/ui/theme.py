@@ -27,19 +27,6 @@ COLORS = {
     "warning": "#F39C12",
 }
 
-CHART_COLORS = [
-    "#E67E22",
-    "#27AE60",
-    "#3498DB",
-    "#E74C3C",
-    "#9B59B6",
-    "#1ABC9C",
-    "#E91E63",
-    "#8BC34A",
-    "#FF9800",
-    "#00BCD4",
-]
-
 # ── Fonts ──
 
 FONT_FAMILY = "-apple-system, 'SF Pro Text', 'Helvetica Neue', 'Segoe UI', Roboto, sans-serif"
@@ -331,13 +318,6 @@ def format_tokens(count: int) -> str:
     if count < 1_000_000:
         return f"{count / 1000:.1f}K"
     return f"{count / 1_000_000:.1f}M"
-
-
-def format_cost(amount: float) -> str:
-    """Format a dollar amount."""
-    if amount < 0.01:
-        return f"${amount:.4f}"
-    return f"${amount:.2f}"
 
 
 def provider_label(provider: str) -> str:

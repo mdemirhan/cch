@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aiosqlite import Row
@@ -129,19 +129,6 @@ class SessionRepository:
             (limit,),
         )
 
-    async def get_stats_row(self) -> Row | None:
-        return await self._db.fetch_one("""
-            SELECT
-                COUNT(*) as total_sessions,
-                COALESCE(SUM(message_count), 0) as total_messages,
-                COALESCE(SUM(tool_call_count), 0) as total_tool_calls,
-                COALESCE(SUM(total_input_tokens), 0) as total_input_tokens,
-                COALESCE(SUM(total_output_tokens), 0) as total_output_tokens,
-                COALESCE(SUM(total_cache_read_tokens), 0) as total_cache_read_tokens,
-                COALESCE(SUM(total_cache_creation_tokens), 0) as total_cache_creation_tokens
-            FROM sessions
-        """)
-
 
 class ProjectRepository:
     """SQL query repository for project data."""
@@ -157,67 +144,3 @@ class ProjectRepository:
             "SELECT * FROM projects WHERE project_id = ?",
             (project_id,),
         )
-
-
-class AnalyticsRepository:
-    """SQL query repository for analytics projections."""
-
-    def __init__(self, db: Database) -> None:
-        self._db = db
-
-    async def get_cost_rows(self, period: str) -> list[Row]:
-        match period:
-            case "weekly":
-                date_expr = "strftime('%Y-W%W', created_at)"
-            case "monthly":
-                date_expr = "strftime('%Y-%m', created_at)"
-            case _:
-                date_expr = "DATE(created_at)"
-        return await self._db.fetch_all(f"""
-            SELECT
-                {date_expr} as period_date,
-                model,
-                SUM(total_input_tokens) as input_tokens,
-                SUM(total_output_tokens) as output_tokens,
-                SUM(total_cache_read_tokens) as cache_read_tokens,
-                SUM(total_cache_creation_tokens) as cache_creation_tokens
-            FROM sessions
-            WHERE model != ''
-            GROUP BY period_date, model
-            ORDER BY period_date
-        """)
-
-    async def get_tool_usage_rows(self) -> list[Row]:
-        return await self._db.fetch_all("""
-            SELECT
-                tool_name,
-                COUNT(*) as call_count,
-                COUNT(DISTINCT session_id) as session_count
-            FROM tool_calls
-            GROUP BY tool_name
-            ORDER BY call_count DESC
-        """)
-
-    async def get_heatmap_rows(self) -> list[Row]:
-        return await self._db.fetch_all("""
-            SELECT
-                CAST(strftime('%w', timestamp) AS INTEGER) as dow,
-                CAST(strftime('%H', timestamp) AS INTEGER) as hour,
-                COUNT(*) as count
-            FROM messages
-            WHERE timestamp != ''
-            GROUP BY dow, hour
-        """)
-
-    async def get_model_usage_rows(self) -> list[dict[str, Any]]:
-        rows = await self._db.fetch_all("""
-            SELECT
-                model,
-                COUNT(*) as session_count,
-                SUM(total_output_tokens) as total_output_tokens
-            FROM sessions
-            WHERE model != ''
-            GROUP BY model
-            ORDER BY session_count DESC
-        """)
-        return [dict(row) for row in rows]

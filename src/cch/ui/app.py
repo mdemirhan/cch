@@ -166,7 +166,6 @@ class CCHMainWindow(QMainWindow):
 
         QShortcut(QKeySequence("Ctrl+1"), self, lambda: self._sidebar.select_nav("history"))
         QShortcut(QKeySequence("Ctrl+2"), self, lambda: self._sidebar.select_nav("search"))
-        QShortcut(QKeySequence("Ctrl+3"), self, lambda: self._sidebar.select_nav("statistics"))
         QShortcut(QKeySequence("F11"), self, self._toggle_session_focus_mode)
         QShortcut(QKeySequence("Ctrl+Shift+M"), self, self._toggle_session_focus_mode)
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self._exit_session_focus_mode)
@@ -203,10 +202,6 @@ class CCHMainWindow(QMainWindow):
             self._list_panel.setVisible(False)
             self._detail_panel.setVisible(False)
             self._content_panel.show_search()
-        elif name == "statistics":
-            self._list_panel.setVisible(False)
-            self._detail_panel.setVisible(False)
-            self._content_panel.show_statistics()
 
     def _toggle_session_focus_mode(self) -> None:
         """Toggle session-detail focus mode for history view."""
@@ -253,7 +248,6 @@ class CCHMainWindow(QMainWindow):
                 [
                     "Ctrl+1: Projects view",
                     "Ctrl+2: Search view",
-                    "Ctrl+3: Stats view",
                     "Ctrl+Shift+M or F11: Focus/unfocus session detail",
                     "Esc: Exit focus mode",
                     "Ctrl++ or Ctrl+=: Zoom in session detail",

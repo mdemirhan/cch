@@ -1,6 +1,5 @@
 """Pydantic models for CCH."""
 
-from cch.models.analytics import CostBreakdown, HeatmapData, ToolUsageEntry
 from cch.models.categories import (
     ALL_CATEGORY_KEYS,
     CATEGORY_FILTERS,
@@ -17,9 +16,7 @@ from cch.models.sessions import MessageView, SessionDetail, SessionSummary, Tool
 
 __all__ = [
     "ContentBlock",
-    "CostBreakdown",
     "COLOR_BY_KEY",
-    "HeatmapData",
     "IndexResult",
     "MessageView",
     "ParsedMessage",
@@ -30,7 +27,6 @@ __all__ = [
     "SessionSummary",
     "TokenUsage",
     "ToolCallView",
-    "ToolUsageEntry",
     "ToolUseBlock",
     "ALL_CATEGORY_KEYS",
     "CATEGORY_FILTERS",
